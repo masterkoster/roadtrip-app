@@ -10,6 +10,8 @@ import tripRoutes from './routes/trips';
 import photoRoutes from './routes/photos';
 import guideRoutes from './routes/guides';
 import waypointRoutes from './routes/waypoints';
+import poiRoutes from './routes/poi';
+import storyRoutes from './routes/stories';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -32,6 +34,8 @@ app.use('/api/trips', tripRoutes);
 app.use('/api/photos', photoRoutes);
 app.use('/api/guides', guideRoutes);
 app.use('/api/waypoints', waypointRoutes);
+app.use('/api/poi', poiRoutes);
+app.use('/api/stories', storyRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

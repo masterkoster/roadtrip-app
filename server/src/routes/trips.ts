@@ -61,7 +61,7 @@ router.get('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
 
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const { title, description, startDate, endDate } = req.body;
+    const { title, description, startDate, endDate, vehicle } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
 
     const [trip] = await db.insert(schema.trips).values({
@@ -70,6 +70,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       description,
       startDate: toISO(startDate),
       endDate: toISO(endDate),
+      vehicle: vehicle ?? 'car',
     }).returning();
 
     return res.status(201).json(trip);
@@ -82,7 +83,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
 router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const tripId = parseInt(req.params.id);
-    const { title, description, startDate, endDate, isPublic } = req.body;
+    const { title, description, startDate, endDate, isPublic, vehicle } = req.body;
     const [trip] = await db.select()
       .from(schema.trips)
       .where(and(eq(schema.trips.id, tripId), eq(schema.trips.userId, req.userId!)))
@@ -96,6 +97,7 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
         startDate: startDate ? toISO(startDate) : trip.startDate,
         endDate: endDate ? toISO(endDate) : trip.endDate,
         isPublic: isPublic ?? trip.isPublic,
+        vehicle: vehicle ?? trip.vehicle,
         updatedAt: nowISO(),
       })
       .where(eq(schema.trips.id, tripId))

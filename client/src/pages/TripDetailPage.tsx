@@ -4,6 +4,10 @@ import api from '../api/client';
 import TripMap from '../components/map/TripMap';
 import ElevationProfile from '../components/trip/ElevationProfile';
 import PhotoGallery from '../components/trip/PhotoGallery';
+import WaypointPanel from '../components/trip/WaypointPanel';
+import POISuggestions from '../components/trip/POISuggestions';
+import StoryPlayer from '../components/trip/StoryPlayer';
+import { VehicleBadge } from '../components/trip/VehicleIcon';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -11,7 +15,9 @@ interface TrackPoint { id: number; latitude: number; longitude: number; elevatio
 interface Waypoint { id: number; name: string; description: string | null; latitude: number; longitude: number; orderIndex: number; }
 interface Photo { id: number; url: string; thumbnailUrl: string | null; latitude: number | null; longitude: number | null; caption: string | null; }
 interface Guide { id: number; title: string; description: string | null; difficulty: string; }
-interface Trip { id: number; title: string; description: string | null; distance: number | null; duration: number | null; startDate: string | null; endDate: string | null; isPublic: string; }
+interface Trip { id: number; title: string; description: string | null; distance: number | null; duration: number | null; startDate: string | null; endDate: string | null; isPublic: string; vehicle: string; }
+
+interface StorySegment { id: number; title: string; content: string; orderIndex: number; waypointId: number | null; }
 
 function formatDuration(seconds: number | null) {
   if (!seconds) return null;
@@ -42,6 +48,10 @@ export default function TripDetailPage() {
   const [isTracking, setIsTracking] = useState(false);
   const watchIdRef = useRef<number | null>(null);
   const heroRef = useRef<HTMLDivElement>(null);
+
+  const [storyData, setStoryData] = useState<{ guide: Guide; segments: StorySegment[]; waypoints: Waypoint[] } | null>(null);
+  const [showingStory, setShowingStory] = useState(false);
+  const [loadingStory, setLoadingStory] = useState(false);
 
   useEffect(() => {
     api.get(`/trips/${id}`).then(({ data }) => {
@@ -111,6 +121,19 @@ export default function TripDetailPage() {
     catch { toast.error('Failed to delete'); }
   };
 
+  const loadStory = async () => {
+    setLoadingStory(true);
+    try {
+      const { data } = await api.get(`/stories/${id}`);
+      setStoryData(data);
+      setShowingStory(true);
+    } catch (err: any) {
+      if (err.response?.status === 404) toast.error('No guide found for this trip');
+      else toast.error('Failed to load story');
+    }
+    setLoadingStory(false);
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center py-24">
       <div className="text-center">
@@ -139,7 +162,10 @@ export default function TripDetailPage() {
           <Link to="/" className="text-white/60 hover:text-white text-sm mb-4 inline-block transition-colors">&larr; Dashboard</Link>
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
             <div className="max-w-2xl">
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight">{trip.title}</h1>
+              <div className="flex items-center gap-3 mb-2">
+                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-tight">{trip.title}</h1>
+                <VehicleBadge type={trip.vehicle as any} className="mt-2" />
+              </div>
               {trip.description && <p className="text-white/70 text-lg mt-3 max-w-xl leading-relaxed">{trip.description}</p>}
             </div>
             <div className="flex gap-2 shrink-0">
@@ -152,6 +178,16 @@ export default function TripDetailPage() {
                 <button onClick={startTracking} className="inline-flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium text-sm backdrop-blur-sm transition-colors border border-white/20">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
                   Record Live
+                </button>
+              )}
+              {guides.length > 0 && (
+                <button
+                  onClick={loadStory}
+                  disabled={loadingStory}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-roadtrip-600 hover:bg-roadtrip-700 text-white rounded-xl font-medium text-sm transition-colors shadow-lg disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                  {loadingStory ? 'Loading...' : 'Play Story'}
                 </button>
               )}
               {trackPoints.length >= 2 && (
@@ -256,8 +292,12 @@ export default function TripDetailPage() {
             </div>
           </div>
 
-          {/* RIGHT: Guides + Waypoints */}
+          {/* RIGHT: Waypoints + POI + Guides */}
           <div className="space-y-6">
+            <WaypointPanel waypoints={waypoints} tripId={Number(id)} onUpdate={() => api.get(`/trips/${id}`).then(({ data }) => setWaypoints(data.waypoints || []))} />
+
+            <POISuggestions tripId={Number(id)} trackPoints={trackPoints} onWaypointAdded={() => api.get(`/trips/${id}`).then(({ data }) => setWaypoints(data.waypoints || []))} />
+
             {/* Guides */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
               <div className="flex items-center justify-between mb-4">
@@ -293,33 +333,22 @@ export default function TripDetailPage() {
                 </div>
               )}
             </div>
-
-            {/* Waypoints */}
-            {waypoints.length > 0 && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-                <h2 className="text-lg font-bold text-gray-900 mb-4">
-                  Stops <span className="text-gray-400 font-normal">{waypoints.length}</span>
-                </h2>
-                <div className="relative">
-                  <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-roadtrip-100" />
-                  <div className="space-y-4">
-                    {waypoints.map((wp, i) => (
-                      <div key={wp.id} className="relative pl-10">
-                        <div className="absolute left-1.5 top-1 w-4 h-4 rounded-full bg-roadtrip-600 text-white text-[9px] font-bold flex items-center justify-center ring-4 ring-white z-10">{i + 1}</div>
-                        <div>
-                          <p className="font-medium text-sm text-gray-900">{wp.name}</p>
-                          {wp.description && <p className="text-xs text-gray-500 mt-0.5">{wp.description}</p>}
-                          <p className="text-[10px] text-gray-400 mt-0.5 font-mono">{wp.latitude.toFixed(5)}, {wp.longitude.toFixed(5)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      {/* Story Player Overlay */}
+      {showingStory && storyData && (
+        <StoryPlayer
+          tripId={Number(id)}
+          segments={storyData.segments}
+          waypoints={storyData.waypoints}
+          photos={photos}
+          trackPoints={trackPoints}
+          vehicle={(trip?.vehicle as any) || 'car'}
+          onClose={() => setShowingStory(false)}
+        />
+      )}
     </div>
   );
 }

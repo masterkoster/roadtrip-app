@@ -19,6 +19,7 @@ export const trips = sqliteTable('trips', {
   endDate: text('end_date'),
   distance: real('distance'),
   duration: integer('duration'),
+  vehicle: text('vehicle').notNull().default('car'),
   isPublic: text('is_public').notNull().default('private'),
   createdAt: text('created_at').notNull().$default(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$default(() => new Date().toISOString()),

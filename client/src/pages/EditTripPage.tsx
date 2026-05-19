@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import toast from 'react-hot-toast';
+import { vehicleOptions, type VehicleType } from '../components/trip/VehicleIcon';
 
 export default function EditTripPage() {
   const { id } = useParams();
@@ -9,6 +10,7 @@ export default function EditTripPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isPublic, setIsPublic] = useState('private');
+  const [vehicle, setVehicle] = useState<VehicleType>('car');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -17,6 +19,7 @@ export default function EditTripPage() {
       setTitle(data.title);
       setDescription(data.description || '');
       setIsPublic(data.isPublic || 'private');
+      setVehicle(data.vehicle || 'car');
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
 
@@ -24,7 +27,7 @@ export default function EditTripPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.put(`/trips/${id}`, { title, description, isPublic });
+      await api.put(`/trips/${id}`, { title, description, isPublic, vehicle });
       toast.success('Trip updated!');
       navigate(`/trips/${id}`);
     } catch (err: any) {
@@ -47,6 +50,12 @@ export default function EditTripPage() {
         <div>
           <label className="label">Description</label>
           <textarea className="input min-h-[100px]" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Vehicle</label>
+          <select className="input" value={vehicle} onChange={(e) => setVehicle(e.target.value as VehicleType)}>
+            {vehicleOptions.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+          </select>
         </div>
         <div>
           <label className="label">Visibility</label>

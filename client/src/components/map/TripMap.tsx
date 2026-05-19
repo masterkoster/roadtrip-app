@@ -22,12 +22,13 @@ interface TripMapProps {
   className?: string;
   interactive?: boolean;
   onMapLoaded?: () => void;
+  onMapClick?: (lngLat: { lat: number; lng: number }) => void;
   mapStyle?: MapStyle;
 }
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
-  className = '', interactive = true, onMapLoaded, mapStyle = 'eclipse',
+  className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'eclipse',
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -285,6 +286,10 @@ export default function TripMap({
     });
 
     map.current = m;
+
+    m.on('click', (e) => {
+      onMapClick?.(e.lngLat);
+    });
 
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
