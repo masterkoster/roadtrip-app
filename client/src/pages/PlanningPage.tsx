@@ -284,11 +284,37 @@ export default function PlanningPage() {
         const coords = (data.routeGeometry || []) as [number, number][];
         setRouteGeometry(coords);
         setLegStats(data.legs || []);
-        setLegGeometries((data.legs || []).map((leg: any) => ({
-          fromId: leg.fromId,
-          toId: leg.toId,
-          coordinates: leg.geometry || [],
-        })).filter((lg: any) => lg.coordinates.length > 0));
+        // Split full route geometry into per-leg coordinates for map click detection
+        const fullCoords = coords;
+        const serverLegs = data.legs || [];
+        const legGeoms = serverLegs.map((leg: any, i: number) => {
+          let legCoords: [number, number][] = [];
+          if (fullCoords.length > 0 && i < serverLegs.length) {
+            const fromWp = waypoints.find(w => w.id === leg.fromId);
+            const toWp = waypoints.find(w => w.id === leg.toId);
+            if (fromWp && toWp) {
+              // Find the index range in fullCoords that corresponds to this leg
+              // by matching the end waypoint positions
+              const fromPos: [number, number] = [fromWp.longitude, fromWp.latitude];
+              const toPos: [number, number] = [toWp.longitude, toWp.latitude];
+              if (i === 0) {
+                // First leg: from start to first waypoint
+                const endIdx = findCoordIndex(fullCoords, toPos);
+                legCoords = fullCoords.slice(0, endIdx >= 0 ? endIdx + 1 : fullCoords.length);
+              } else {
+                // Later legs: find where previous leg ended, find where this leg ends
+                const prevToWp = waypoints.find(w => w.id === serverLegs[i - 1].toId);
+                const startPos: [number, number] = prevToWp ? [prevToWp.longitude, prevToWp.latitude] : fromPos;
+                let startIdx = 0;
+                if (i > 0) { const si = findCoordIndex(fullCoords, startPos); if (si >= 0) startIdx = si; }
+                const endIdx = findCoordIndex(fullCoords, toPos, startIdx);
+                legCoords = fullCoords.slice(startIdx, endIdx >= 0 ? endIdx + 1 : fullCoords.length);
+              }
+            }
+          }
+          return { fromId: leg.fromId, toId: leg.toId, coordinates: legCoords };
+        });
+        setLegGeometries(legGeoms.filter((lg: any) => lg.coordinates.length > 0));
         setDayItinerary(data);
         setCostData({
           fuelCost: data.fuelCost || { total: 0, perLeg: [] },
@@ -334,7 +360,7 @@ export default function PlanningPage() {
 
   useEffect(() => {
     if (tab === 'find' && trackPoints.length >= 2 && poiCategories.length === 0) fetchPOIs();
-  }, [tab]);
+  }, [tab, trackPoints?.length]);
 
   const addPoiAsWaypoint = async (poi: any) => {
     setAddingPoi(poi.id);
@@ -535,7 +561,7 @@ export default function PlanningPage() {
               {poiLoading ? (
                 <div className="text-center py-6">
                   <div className="w-6 h-6 border-2 border-roadtrip-200 border-t-roadtrip-600 rounded-full animate-spin mx-auto" />
-                  <p className="text-xs text-gray-400 mt-2">Scanning OpenStreetMap...</p>
+                  <p className="text-xs text-gray-400 mt-2">Searching nearby places...</p>
                 </div>
               ) : activePoiCat && pois[activePoiCat] ? (
                 <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
@@ -603,4 +629,15 @@ export default function PlanningPage() {
       </div>
     </div>
   );
+}
+
+/** Find index of nearest coordinate in array (within 5km) */
+function findCoordIndex(coords: [number, number][], target: [number, number], startIdx = 0): number {
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = startIdx; i < coords.length; i++) {
+    const d = Math.abs(coords[i][0] - target[0]) + Math.abs(coords[i][1] - target[1]);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+  return bestDist < 0.05 ? bestIdx : -1; // ~5km tolerance for road-snapped waypoints
 }
