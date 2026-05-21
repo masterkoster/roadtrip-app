@@ -1,5 +1,6 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
+import { getLandmarkSticker } from '../../utils/landmarkStickers';
 
 const MAP_STYLES = {
   colorful: 'https://tiles.openfreemap.org/styles/liberty',
@@ -285,20 +286,13 @@ export default function TripMap({
       outer.style.cssText = 'position:relative;width:56px;height:56px;cursor:pointer';
 
       const inner = document.createElement('div');
-      inner.style.cssText = 'position:absolute;inset:0;border:2.5px solid white;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#7c3aed,#4f46e5);box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);transition:transform .15s;display:flex;align-items:center;justify-content:center';
+      inner.style.cssText = 'position:absolute;inset:-2px;border:3px solid white;border-radius:50%;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);transition:transform .15s;display:flex;align-items:center;justify-content:center';
       inner.title = lm.name;
 
-      if (lm.thumbnail) {
-        const img = document.createElement('img');
-        img.src = lm.thumbnail;
-        img.alt = lm.name;
-        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
-        img.onerror = () => { inner.textContent = '🏛️'; inner.style.fontSize = '24px'; };
-        inner.appendChild(img);
-      } else {
-        inner.textContent = '🏛️';
-        inner.style.fontSize = '24px';
-      }
+      const svgDataUri = 'data:image/svg+xml,' + encodeURIComponent(getLandmarkSticker(lm.id));
+      inner.style.backgroundImage = `url('${svgDataUri}')`;
+      inner.style.backgroundSize = 'cover';
+      inner.style.backgroundPosition = 'center';
 
       inner.addEventListener('mouseenter', () => { inner.style.transform = 'scale(1.15)'; });
       inner.addEventListener('mouseleave', () => { inner.style.transform = 'scale(1)'; });
