@@ -449,7 +449,7 @@ export default function TripMap({
             }
           }
         }
-        onMapClick?.(e.lngLat);
+        // onMapClick intentionally removed — user doesn't want click-to-add-waypoint
       }, 280);
     });
 

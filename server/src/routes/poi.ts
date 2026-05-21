@@ -25,17 +25,15 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
     let routePoints: { latitude: number; longitude: number }[];
 
     if (!isNaN(south) && !isNaN(north) && !isNaN(west) && !isNaN(east)) {
-      // Use viewport center + edges
-      const centerLat = (south + north) / 2;
-      const centerLng = (west + east) / 2;
-      const corners: { latitude: number; longitude: number }[] = [
-        { latitude: south, longitude: west },
-        { latitude: south, longitude: east },
-        { latitude: north, longitude: west },
-        { latitude: north, longitude: east },
-        { latitude: centerLat, longitude: centerLng },
-      ];
-      routePoints = corners;
+      // Use viewport: sample a grid to cover the area
+      const pts: { latitude: number; longitude: number }[] = [];
+      for (let lat = Math.ceil(south * 2) / 2; lat <= north; lat += 1.5) {
+        for (let lng = Math.ceil(west * 2) / 2; lng <= east; lng += 1.5) {
+          pts.push({ latitude: lat, longitude: lng });
+        }
+      }
+      if (pts.length === 0) pts.push({ latitude: (south + north) / 2, longitude: (west + east) / 2 });
+      routePoints = pts;
     } else {
       const trackPts = await db.select()
         .from(schema.trackPoints)
