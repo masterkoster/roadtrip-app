@@ -534,4 +534,19 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
   }
 });
 
+// Route preview for drag-to-insert: takes 3 waypoints, returns route geometry
+router.post('/:id/route-preview', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { waypoints } = req.body;
+    if (!waypoints || waypoints.length < 2) {
+      return res.status(400).json({ error: 'Need at least 2 waypoints' });
+    }
+    const result = await routeBetweenWaypoints(waypoints);
+    if (!result) return res.json({ geometry: [] });
+    return res.json({ geometry: result.geometry.coordinates });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to calculate preview' });
+  }
+});
+
 export default router;

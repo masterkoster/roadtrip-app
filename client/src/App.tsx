@@ -28,11 +28,11 @@ export default function App() {
         <Route path="trips/new" element={<NewTripPage />} />
         <Route path="trips/:id" element={<TripDetailPage />} />
         <Route path="trips/:id/edit" element={<EditTripPage />} />
-        <Route path="trips/:id/plan" element={<PlanningPage />} />
         <Route path="trips/:id/photos" element={<PhotosPage />} />
         <Route path="trips/:id/guides/new" element={<NewGuidePage />} />
         <Route path="guides/:id" element={<GuideViewPage />} />
       </Route>
+      <Route path="trips/:id/plan" element={<ProtectedRoute><PlanningPage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

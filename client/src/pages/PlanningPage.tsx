@@ -70,6 +70,7 @@ export default function PlanningPage() {
   // Route geometry + leg stats from estimate-stops
   const [routeGeometry, setRouteGeometry] = useState<[number, number][]>([]);
   const [legStats, setLegStats] = useState<LegStat[]>([]);
+  const [legGeometries, setLegGeometries] = useState<{ fromId: number; toId: number; coordinates: [number, number][] }[]>([]);
   const [routeLoading, setRouteLoading] = useState(false);
   const [costData, setCostData] = useState<CostData | null>(null);
 
@@ -103,6 +104,50 @@ export default function PlanningPage() {
     toast('Location selected — name your stop');
   }, []);
 
+  const handleRouteWaypointDrop = useCallback(async (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => {
+    setTab('stops');
+    setPanelOpen(true);
+    // Reverse geocode via Nominatim
+    let name = 'Via point';
+    let fullAddress = '';
+    try {
+      const geoRes = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lngLat.lat}&lon=${lngLat.lng}&format=json&zoom=10`
+      );
+      const geoData = await geoRes.json();
+      if (geoData.display_name) {
+        fullAddress = geoData.display_name;
+        name = geoData.name || geoData.display_name.split(',')[0]?.trim() || 'Via point';
+      }
+    } catch { /* use fallback name */ }
+
+    try {
+      // Create waypoint
+      await api.post(`/waypoints/trip/${id}`, {
+        name: name.substring(0, 100),
+        latitude: lngLat.lat,
+        longitude: lngLat.lng,
+        description: fullAddress.substring(0, 500) || 'Dragged stop',
+      });
+
+      // Reorder: place new stop between fromId and toId
+      const { data: updated } = await api.get(`/trips/${id}`);
+      const currentWps: Waypoint[] = updated.waypoints || [];
+      const fromIdx = currentWps.findIndex((w: Waypoint) => w.id === between.fromId);
+      const toIdx = currentWps.findIndex((w: Waypoint) => w.id === between.toId);
+      if (fromIdx >= 0 && toIdx >= 0) {
+        const newWp = currentWps[currentWps.length - 1]; // the one we just created
+        const others = currentWps.filter((w: Waypoint) => w.id !== newWp.id);
+        const insertAt = Math.min(fromIdx + 1, others.length);
+        others.splice(insertAt, 0, newWp);
+        await api.put(`/waypoints/trip/${id}/reorder`, { waypointIds: others.map((w: Waypoint) => w.id) });
+      }
+
+      toast.success(`Added "${name}"`);
+      loadTrip();
+    } catch { toast.error('Failed to add stop'); }
+  }, [id, waypoints, loadTrip]);
+
   // Auto-calculate route whenever waypoints change
   useEffect(() => {
     if (waypoints.length < 2) {
@@ -120,6 +165,11 @@ export default function PlanningPage() {
         const coords = (data.routeGeometry || []) as [number, number][];
         setRouteGeometry(coords);
         setLegStats(data.legs || []);
+        setLegGeometries((data.legs || []).map((leg: any) => ({
+          fromId: leg.fromId,
+          toId: leg.toId,
+          coordinates: leg.geometry || [],
+        })).filter((lg: any) => lg.coordinates.length > 0));
         setCostData({
           fuelCost: data.fuelCost || { total: 0, perLeg: [] },
           accommodationCost: data.accommodationCost || { total: 0, nights: 0, perNight: 0 },
@@ -179,9 +229,12 @@ export default function PlanningPage() {
           trackPoints={trackPoints}
           waypoints={waypoints}
           routeGeometry={routeGeometry}
+          legGeometries={legGeometries}
+          tripId={Number(id)}
           animated={false}
           interactive={true}
           onMapClick={handleMapClick}
+          onRouteWaypointDrop={handleRouteWaypointDrop}
         />
       </div>
 

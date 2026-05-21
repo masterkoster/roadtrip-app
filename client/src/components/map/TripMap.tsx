@@ -24,16 +24,27 @@ interface TripMapProps {
   onMapClick?: (lngLat: { lat: number; lng: number }) => void;
   mapStyle?: MapStyle;
   routeGeometry?: [number, number][];
+  tripId?: number;
+  legGeometries?: { fromId: number; toId: number; coordinates: [number, number][] }[];
+  onRouteWaypointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
 }
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
-  routeGeometry,
+  routeGeometry, tripId, legGeometries, onRouteWaypointDrop,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const animationRef = useRef<number | null>(null);
+  const dragStateRef = useRef<{
+    marker: maplibregl.Marker;
+    fromId: number;
+    toId: number;
+    fromCoord: [number, number];
+    toCoord: [number, number];
+  } | null>(null);
+  const previewTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const [currentStyle] = useState<MapStyle>(mapStyle);
 
   const { startMarker, endMarker } = useMemo(() => {
@@ -303,16 +314,147 @@ export default function TripMap({
 
     map.current = m;
 
+    function findClickedLeg(lngLat: { lat: number; lng: number }): { fromId: number; toId: number; fromCoord: [number, number]; toCoord: [number, number] } | null {
+      if (!legGeometries || legGeometries.length === 0) return null;
+      let best: { fromId: number; toId: number; fromCoord: [number, number]; toCoord: [number, number]; dist: number } | null = null;
+      for (const leg of legGeometries) {
+        if (!leg.coordinates || leg.coordinates.length === 0) continue;
+        for (const coord of leg.coordinates) {
+          const d = Math.sqrt((coord[0] - lngLat.lng) ** 2 + (coord[1] - lngLat.lat) ** 2);
+          if (!best || d < best.dist) {
+            const fromWaypoint = waypoints.find(w => w.id === leg.fromId);
+            const toWaypoint = waypoints.find(w => w.id === leg.toId);
+            if (fromWaypoint && toWaypoint) {
+              best = {
+                fromId: leg.fromId,
+                toId: leg.toId,
+                fromCoord: [fromWaypoint.longitude, fromWaypoint.latitude],
+                toCoord: [toWaypoint.longitude, toWaypoint.latitude],
+                dist: d,
+              };
+            }
+          }
+        }
+      }
+      return best;
+    }
+
+    function updatePreview(marker: maplibregl.Marker, dragInfo: { fromId: number; toId: number; fromCoord: [number, number]; toCoord: [number, number] }) {
+      if (!m) return;
+      const pos = marker.getLngLat();
+      const previewCoords: [number, number][] = [dragInfo.fromCoord, [pos.lng, pos.lat], dragInfo.toCoord];
+
+      // Update straight dashed preview line immediately
+      try {
+        const src = m.getSource('route-preview') as maplibregl.GeoJSONSource;
+        if (src) {
+          src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: previewCoords } });
+        }
+      } catch {
+        // Source may not exist yet
+      }
+
+      // Debounced OSRM preview
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+      if (!tripId) return;
+      previewTimeoutRef.current = setTimeout(async () => {
+        try {
+          const coords = [dragInfo.fromCoord, [pos.lng, pos.lat], dragInfo.toCoord].map(c => ({ longitude: c[0], latitude: c[1] }));
+          const res = await fetch(`/api/trips/${tripId}/route-preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ waypoints: coords }),
+          });
+          const data = await res.json();
+          if (data.geometry && data.geometry.length > 1 && m) {
+            const src = m.getSource('route-preview') as maplibregl.GeoJSONSource;
+            if (src) {
+              src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: data.geometry } });
+            }
+          }
+        } catch { /* preview failed, stay with straight line */ }
+      }, 500);
+    }
+
     m.on('click', (e) => {
+      // Check if click hit the route line (only when legGeometries is available)
+      if (legGeometries && legGeometries.length > 0 && m) {
+        const features = m.queryRenderedFeatures(e.point, { layers: ['route-line'] });
+        if (features.length > 0) {
+          const clicked = findClickedLeg(e.lngLat);
+          if (clicked) {
+            // Create draggable marker
+            const el = document.createElement('div');
+            el.innerHTML = `<div style="width:32px;height:32px;background:#00b4ff;border:3px solid white;border-radius:50%;box-shadow:0 2px 16px rgba(0,180,255,0.6);display:flex;align-items:center;justify-content:center;cursor:grab;animation:pulse 1.5s infinite;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M12 4v16m8-8H4"/></svg>
+            </div>
+            <style>
+              @keyframes pulse { 0%,100% { box-shadow: 0 2px 16px rgba(0,180,255,0.6); } 50% { box-shadow: 0 2px 24px rgba(0,180,255,1); } }
+            </style>`;
+
+            const marker = new maplibregl.Marker({ element: el.firstChild as HTMLElement, draggable: true })
+              .setLngLat([e.lngLat.lng, e.lngLat.lat])
+              .addTo(m);
+
+            // Set up preview source
+            try { m.removeLayer('route-preview-layer'); } catch {}
+            try { m.removeSource('route-preview'); } catch {}
+            m.addSource('route-preview', {
+              type: 'geojson',
+              data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [clicked.fromCoord, [e.lngLat.lng, e.lngLat.lat], clicked.toCoord] } },
+            });
+            m.addLayer({
+              id: 'route-preview-layer',
+              type: 'line',
+              source: 'route-preview',
+              layout: { 'line-cap': 'round', 'line-join': 'round' },
+              paint: {
+                'line-color': '#00b4ff',
+                'line-width': 3,
+                'line-opacity': 0.7,
+                'line-dasharray': [2, 3],
+              },
+            });
+
+            dragStateRef.current = { marker, ...clicked };
+
+            marker.on('drag', () => {
+              if (dragStateRef.current) updatePreview(marker, dragStateRef.current);
+            });
+
+            marker.on('dragend', () => {
+              const pos = marker.getLngLat();
+              marker.remove();
+              try { m.removeLayer('route-preview-layer'); } catch {}
+              try { m.removeSource('route-preview'); } catch {}
+              dragStateRef.current = null;
+              onRouteWaypointDrop?.(
+                { lat: pos.lat, lng: pos.lng },
+                { fromId: clicked.fromId, toId: clicked.toId }
+              );
+            });
+
+            return; // Don't emit onMapClick
+          }
+        }
+      }
       onMapClick?.(e.lngLat);
     });
 
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+      // Clean up any drag marker
+      if (dragStateRef.current) {
+        try { dragStateRef.current.marker.remove(); } catch {}
+        dragStateRef.current = null;
+      }
+      try { m?.removeLayer('route-preview-layer'); } catch {}
+      try { m?.removeSource('route-preview'); } catch {}
       map.current?.remove();
       map.current = null;
     };
-  }, [trackPoints, waypoints, photos, animated, interactive, currentStyle, colors, startMarker, endMarker, onMapLoaded, routeGeometry]);
+  }, [trackPoints, waypoints, photos, animated, interactive, currentStyle, colors, startMarker, endMarker, onMapLoaded, routeGeometry, legGeometries, tripId, onRouteWaypointDrop]);
 
   return <div ref={mapContainer} className={`w-full h-full ${className}`} />;
 }
