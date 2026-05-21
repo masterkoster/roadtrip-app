@@ -277,13 +277,17 @@ export default function TripMap({
 
     landmarks.forEach((lm) => {
       const el = document.createElement('div');
-      el.innerHTML = `<div style="width:56px;height:56px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:3px solid white;border-radius:50%;box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:24px;line-height:1;transition:transform 0.15s" onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'" title="${lm.name}">🏛️</div>`;
-      const mk = new maplibregl.Marker({ element: el.firstChild as HTMLElement })
+      const inner = document.createElement('div');
+      inner.style.cssText = 'width:56px;height:56px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:3px solid white;border-radius:50%;box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);display:flex;align-items:center;justify-content:center;font-size:24px;line-height:1;transition:transform .15s;cursor:pointer';
+      inner.textContent = '🏛️';
+      inner.title = lm.name;
+      inner.addEventListener('mouseenter', () => { inner.style.transform = 'scale(1.15)'; });
+      inner.addEventListener('mouseleave', () => { inner.style.transform = 'scale(1)'; });
+      inner.addEventListener('click', () => { onLandmarkClickRef.current?.(lm); });
+      el.appendChild(inner);
+      const mk = new maplibregl.Marker({ element: el })
         .setLngLat([lm.longitude, lm.latitude])
         .addTo(m);
-      el.firstChild?.addEventListener('click', () => {
-        onLandmarkClickRef.current?.(lm);
-      });
       landmarkMarkersRef.current.push(mk);
     });
   }, [landmarks, ready]);
