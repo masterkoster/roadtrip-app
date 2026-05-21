@@ -7,6 +7,17 @@ import { getEnrichedLandmarks, filterLandmarksByBounds } from '../utils/landmark
 
 const router = Router();
 
+// Public: get all landmarks (no auth needed)
+router.get('/landmarks', async (_req: any, res: Response) => {
+  try {
+    const allLandmarks = await getEnrichedLandmarks();
+    return res.json({ landmarks: allLandmarks, total: allLandmarks.length });
+  } catch (err: any) {
+    console.error('Public landmarks error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch landmarks' });
+  }
+});
+
 // Get POI suggestions along a trip's route
 router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {

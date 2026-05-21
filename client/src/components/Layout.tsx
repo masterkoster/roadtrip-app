@@ -15,7 +15,7 @@ export default function Layout() {
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/60 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <Link to="/" className="flex items-center gap-2.5 group">
+            <Link to="/trips" className="flex items-center gap-2.5 group">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-roadtrip-500 to-roadtrip-700 flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
                 <svg className="w-5 h-5 text-white" viewBox="0 0 100 100" fill="currentColor">
                   <path d="M30 65 L50 25 L70 65 Z" />

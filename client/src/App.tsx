@@ -3,6 +3,7 @@ import { useAuthStore } from './stores/authStore';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import LandingPage from './pages/LandingPage';
 import DashboardPage from './pages/DashboardPage';
 import TripDetailPage from './pages/TripDetailPage';
 import PlanningPage from './pages/PlanningPage';
@@ -23,16 +24,16 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/trips" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<DashboardPage />} />
-        <Route path="trips/new" element={<NewTripPage />} />
-        <Route path="trips/:id" element={<TripDetailPage />} />
-        <Route path="trips/:id/edit" element={<EditTripPage />} />
-        <Route path="trips/:id/photos" element={<PhotosPage />} />
-        <Route path="trips/:id/guides/new" element={<NewGuidePage />} />
-        <Route path="guides/:id" element={<GuideViewPage />} />
+        <Route path="new" element={<NewTripPage />} />
+        <Route path=":id" element={<TripDetailPage />} />
+        <Route path=":id/edit" element={<EditTripPage />} />
+        <Route path=":id/photos" element={<PhotosPage />} />
+        <Route path=":id/guides/new" element={<NewGuidePage />} />
       </Route>
-      <Route path="trips/:id/plan" element={<ProtectedRoute><PlanningPage /></ProtectedRoute>} />
+      <Route path="/trips/:id/plan" element={<ProtectedRoute><PlanningPage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
