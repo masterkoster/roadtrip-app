@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api/client';
 import toast from 'react-hot-toast';
 
@@ -20,6 +20,14 @@ interface LegStat {
   durationHours: number;
 }
 
+interface GeocodeResult {
+  display_name: string;
+  lat: string;
+  lon: string;
+  type: string;
+  category: string;
+}
+
 interface WaypointPanelProps {
   waypoints: Waypoint[];
   tripId: number;
@@ -31,14 +39,6 @@ interface WaypointPanelProps {
 }
 
 type DurationUnit = 'minutes' | 'hours' | 'days';
-
-function formatDuration(durationMinutes: number | null): string {
-  if (durationMinutes == null) return '';
-  if (durationMinutes === 0) return '0m';
-  if (durationMinutes < 60) return `${durationMinutes}m`;
-  if (durationMinutes < 1440) return `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
-  return `${(durationMinutes / 1440).toFixed(1)}d`;
-}
 
 function convertToMinutes(value: number, unit: DurationUnit): number {
   if (unit === 'hours') return Math.round(value * 60);
@@ -67,6 +67,15 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
   const [newDuration, setNewDuration] = useState('');
   const [newDurationUnit, setNewDurationUnit] = useState<DurationUnit>('minutes');
   const [newDayIndex, setNewDayIndex] = useState<number | null>(null);
+  const [addingSearch, setAddingSearch] = useState<string | null>(null);
+
+  // Geocoding search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   const [useDragReorder, setUseDragReorder] = useState(() => {
     return localStorage.getItem(STORAGE_KEY) !== 'false';
@@ -85,14 +94,64 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
     }
   }, [pendingLat, pendingLng]);
 
+  // Close search results on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowResults(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Debounced geocoding
+  const doSearch = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    setSearching(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&addressdetails=1`);
+      const data = await res.json();
+      setSearchResults(data || []);
+      setShowResults(true);
+    } catch {
+      setSearchResults([]);
+    }
+    setSearching(false);
+  }, []);
+
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => doSearch(val), 400);
+  };
+
+  const addFromSearch = async (result: GeocodeResult) => {
+    const name = result.display_name.split(',')[0].trim();
+    const lat = parseFloat(result.lat);
+    const lng = parseFloat(result.lon);
+    if (isNaN(lat) || isNaN(lng)) { toast.error('Invalid location'); return; }
+    setAddingSearch(result.display_name);
+    try {
+      await api.post(`/waypoints/trip/${tripId}`, {
+        name, latitude: lat, longitude: lng,
+        description: result.display_name,
+      });
+      toast.success(`Added "${name}"`);
+      setSearchQuery('');
+      setSearchResults([]);
+      setShowResults(false);
+      onUpdate();
+    } catch { toast.error('Failed to add stop'); }
+    setAddingSearch(null);
+  };
+
   const maxDay = Math.max(-1, ...waypoints.map(w => w.dayIndex ?? -1));
   const dayOptions = Array.from({ length: maxDay + 1 }, (_, i) => i);
 
   const getLegStatForStop = (wpId: number): LegStat | null => {
     if (!legStats) return null;
-    const leg = legStats.find(l => l.fromId === wpId);
-    if (!leg) return null;
-    return leg;
+    return legStats.find(l => l.fromId === wpId) || null;
   };
 
   const startEdit = (wp: Waypoint) => {
@@ -137,26 +196,12 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
     } catch { toast.error('Failed to reorder'); }
   };
 
-  // Drag handlers
-  const handleDragStart = (idx: number) => {
-    setDragIdx(idx);
-  };
-
-  const handleDragOver = (e: React.DragEvent, idx: number) => {
-    e.preventDefault();
-    setDragOverIdx(idx);
-  };
-
-  const handleDragLeave = () => {
-    setDragOverIdx(null);
-  };
+  const handleDragStart = (idx: number) => setDragIdx(idx);
+  const handleDragOver = (e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOverIdx(idx); };
+  const handleDragLeave = () => setDragOverIdx(null);
 
   const handleDrop = async (dropIdx: number) => {
-    if (dragIdx == null || dragIdx === dropIdx) {
-      setDragIdx(null);
-      setDragOverIdx(null);
-      return;
-    }
+    if (dragIdx == null || dragIdx === dropIdx) { setDragIdx(null); setDragOverIdx(null); return; }
     const reordered = [...waypoints];
     const [moved] = reordered.splice(dragIdx, 1);
     reordered.splice(dropIdx, 0, moved);
@@ -191,11 +236,7 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
     const duration = newDuration ? convertToMinutes(parseFloat(newDuration) || 0, newDurationUnit) : null;
     try {
       await api.post(`/waypoints/trip/${tripId}`, {
-        name: newName.trim(),
-        latitude: lat,
-        longitude: lng,
-        duration,
-        dayIndex: newDayIndex,
+        name: newName.trim(), latitude: lat, longitude: lng, duration, dayIndex: newDayIndex,
       });
       toast.success('Stop added!');
       setNewName(''); setNewLat(''); setNewLng(''); setNewDuration(''); setNewDayIndex(null);
@@ -205,10 +246,10 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold text-gray-900">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-base font-bold text-gray-900">
           Stops <span className="text-gray-400 font-normal">{waypoints.length}</span>
         </h2>
         <div className="flex items-center gap-2">
@@ -220,16 +261,60 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
             {useDragReorder ? 'Drag' : 'Buttons'}
           </button>
           <button onClick={() => setAddingWaypoint(!addingWaypoint)}
-            className="inline-flex items-center gap-1 text-sm text-roadtrip-600 hover:text-roadtrip-700 font-medium transition-colors">
+            className="inline-flex items-center gap-1 text-sm text-roadtrip-600 hover:text-roadtrip-700 font-medium transition-colors shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
             {addingWaypoint ? 'Cancel' : 'Add'}
           </button>
         </div>
       </div>
 
-      {/* Add waypoint form */}
+      {/* Address search */}
+      <div ref={searchRef} className="relative mb-3">
+        <div className="relative">
+          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-roadtrip-500 transition-all"
+            value={searchQuery}
+            onChange={e => handleSearchChange(e.target.value)}
+            onFocus={() => { if (searchResults.length > 0) setShowResults(true); }}
+            placeholder="Search for a place, address, or city..."
+          />
+          {searching && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              <div className="w-4 h-4 border-2 border-roadtrip-200 border-t-roadtrip-600 rounded-full animate-spin" />
+            </div>
+          )}
+        </div>
+
+        {/* Search results dropdown */}
+        {showResults && searchResults.length > 0 && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-30 max-h-[280px] overflow-y-auto">
+            {searchResults.map((r, i) => (
+              <button
+                key={i}
+                onClick={() => addFromSearch(r)}
+                disabled={addingSearch === r.display_name}
+                className="w-full text-left px-3 py-2.5 hover:bg-roadtrip-50 transition-colors flex items-start gap-2.5 border-b border-gray-50 last:border-0 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-900 truncate">{r.display_name.split(',')[0]}</p>
+                  <p className="text-[11px] text-gray-400 truncate">{r.display_name}</p>
+                </div>
+                <span className="text-[10px] text-gray-400 capitalize shrink-0 mt-0.5">{r.type?.replace(/_/g, ' ')}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Manual add form (for map-click) */}
       {addingWaypoint && (
-        <form onSubmit={addWaypoint} className="mb-4 p-3 bg-roadtrip-50 rounded-xl border border-roadtrip-200 space-y-2">
+        <form onSubmit={addWaypoint} className="mb-3 p-2.5 bg-roadtrip-50 rounded-xl border border-roadtrip-200 space-y-1.5">
           <input className="input text-sm" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Stop name" required />
           <div className="grid grid-cols-2 gap-2">
             <input className="input text-sm" value={newLat} onChange={e => setNewLat(e.target.value)} placeholder="Latitude" type="number" step="any" required />
@@ -256,10 +341,10 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
 
       {/* Empty state */}
       {waypoints.length === 0 ? (
-        <div className="text-center py-6 text-gray-400">
-          <svg className="w-10 h-10 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
-          <p className="text-sm">No stops yet</p>
-          <p className="text-xs text-gray-400 mt-1">Click "Add" or tap the map</p>
+        <div className="text-center py-4 text-gray-400">
+          <svg className="w-8 h-8 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
+          <p className="text-sm">Search for a place above</p>
+          <p className="text-xs text-gray-400 mt-1">Or click the map to add a stop</p>
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -272,23 +357,22 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
                 onDragOver={(e) => handleDragOver(e, idx)}
                 onDragLeave={handleDragLeave}
                 onDrop={() => handleDrop(idx)}
-                className={`group relative flex items-start gap-3 p-3 rounded-xl transition-all cursor-${useDragReorder ? 'grab' : 'default'} ${
+                className={`group relative flex items-start gap-2 p-2 rounded-xl transition-all cursor-${useDragReorder ? 'grab' : 'default'} ${
                   dragIdx === idx ? 'opacity-50 scale-95' : ''
                 } ${dragOverIdx === idx ? 'ring-2 ring-roadtrip-400 bg-roadtrip-50' : ''} ${
                   editingId === wp.id ? 'bg-roadtrip-50 ring-1 ring-roadtrip-200' : 'hover:bg-gray-50'
                 }`}
               >
-                {/* Number / drag handle / up-down buttons */}
-                <div className="flex flex-col items-center gap-0.5 pt-0.5">
+                <div className="flex flex-col items-center pt-0.5">
                   {useDragReorder ? (
-                    <div className="w-6 h-6 rounded-full bg-roadtrip-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0 shadow-sm cursor-grab"
-                      onMouseDown={(e) => { if (useDragReorder) (e.currentTarget.parentElement?.parentElement as HTMLElement)?.setAttribute('draggable', 'true'); }}
+                    <div className="w-5 h-5 rounded-full bg-roadtrip-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0 cursor-grab"
+                      onMouseDown={() => {}}
                     >
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" /></svg>
                     </div>
                   ) : (
                     <>
-                      <span className="w-6 h-6 rounded-full bg-roadtrip-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0 shadow-sm">{idx + 1}</span>
+                      <span className="w-5 h-5 rounded-full bg-roadtrip-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0">{idx + 1}</span>
                       <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         {idx > 0 && <button onClick={() => moveUp(idx)} className="text-gray-400 hover:text-gray-600 leading-none text-xs">▲</button>}
                         {idx < waypoints.length - 1 && <button onClick={() => moveDown(idx)} className="text-gray-400 hover:text-gray-600 leading-none text-xs">▼</button>}
@@ -297,7 +381,6 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
                   )}
                 </div>
 
-                {/* Content */}
                 <div className="flex-1 min-w-0">
                   {editingId === wp.id ? (
                     <div className="space-y-1.5">
@@ -326,14 +409,9 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
                         </div>
                       </div>
 
-                      {/* Duration + Day row */}
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <DurationPicker
-                          value={wp.duration}
-                          onChange={(minutes) => updateDuration(wp.id, minutes, 'minutes')}
-                        />
-                        <select
-                          className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-0.5 bg-white text-gray-600"
+                      <div className="flex items-center gap-1 mt-1">
+                        <DurationPicker value={wp.duration} onChange={(minutes) => updateDuration(wp.id, minutes, 'minutes')} />
+                        <select className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-0.5 bg-white text-gray-600"
                           value={wp.dayIndex ?? ''}
                           onChange={e => updateDay(wp.id, e.target.value ? parseInt(e.target.value) : null)}
                         >
@@ -343,7 +421,6 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, p
                         </select>
                       </div>
 
-                      {/* Leg stat */}
                       {leg && (
                         <div className="mt-1 text-[10px] text-gray-400">
                           → {leg.distanceKm} km · {leg.durationHours.toFixed(1)}h drive
@@ -380,19 +457,14 @@ function DurationPicker({ value, onChange }: { value: number | null; onChange: (
 
   return (
     <div className="flex items-center gap-1">
-      <input
-        className="w-14 text-[11px] border border-gray-200 rounded-lg px-1.5 py-0.5 bg-white text-gray-600"
+      <input className="w-14 text-[11px] border border-gray-200 rounded-lg px-1.5 py-0.5 bg-white text-gray-600"
         value={inputValue}
         onChange={e => setInputValue(e.target.value)}
         onBlur={() => commit(inputValue)}
         onKeyDown={e => { if (e.key === 'Enter') commit(inputValue); }}
-        placeholder="0"
-        type="number"
-        min="0"
-        step="any"
+        placeholder="0" type="number" min="0" step="any"
       />
-      <select
-        className="text-[11px] border border-gray-200 rounded-lg px-1 py-0.5 bg-white text-gray-500"
+      <select className="text-[11px] border border-gray-200 rounded-lg px-1 py-0.5 bg-white text-gray-500"
         value={unit}
         onChange={e => setUnit(e.target.value as DurationUnit)}
       >

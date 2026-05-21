@@ -48,7 +48,9 @@ type Tab = 'stops' | 'find' | 'itinerary';
 
 const CAT_ICONS: Record<string, string> = {
   food: '🍽️', fuel: '⛽', camping: '🏕️', viewpoint: '🏔️',
-  attraction: '🎯', lodging: '🏨', parking: '🅿️', restroom: '🚻',
+  attraction: '🎯', museum: '🏛️', park: '🌳', historical: '🏰',
+  entertainment: '🎭', shopping: '🛍️', beach: '🏖️',
+  lodging: '🏨', parking: '🅿️', restroom: '🚻',
 };
 
 export default function PlanningPage() {
@@ -221,7 +223,7 @@ export default function PlanningPage() {
       </div>
 
       {/* Left panel */}
-      <div className={`absolute top-16 bottom-4 left-4 z-10 w-[400px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[440px]'}`}>
+      <div className={`absolute top-16 bottom-4 left-4 z-10 w-[340px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[380px]'}`}>
         {/* Tabs */}
         <div className="flex gap-1 p-2 border-b border-gray-100">
           {([

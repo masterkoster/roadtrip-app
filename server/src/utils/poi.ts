@@ -14,26 +14,37 @@ export interface POI {
   rating?: number;
 }
 
-export type POICategory = 'food' | 'fuel' | 'camping' | 'viewpoint' | 'attraction' | 'lodging' | 'parking' | 'restroom';
+export type POICategory = 'food' | 'fuel' | 'camping' | 'viewpoint' | 'attraction' | 'museum' | 'park' | 'historical' | 'entertainment' | 'shopping' | 'beach' | 'lodging' | 'parking' | 'restroom';
 
-// Overpass QL queries per category
 const CATEGORY_QUERIES: Record<POICategory, string> = {
   food: 'node[amenity~"^(restaurant|cafe|fast_food|pub|bar)$"]({{bbox}});',
   fuel: 'node[amenity="fuel"]({{bbox}});node[shop="convenience"]({{bbox}});',
   camping: 'node[tourism~"^(camp_site|caravan_site|picnic_site)$"]({{bbox}});',
   viewpoint: 'node[tourism="viewpoint"]({{bbox}});node[natural="peak"]({{bbox}});',
-  attraction: 'node[tourism~"^(attraction|museum|zoo|aquarium|theme_park)$"]({{bbox}});node[historic]({{bbox}});',
+  attraction: 'node[tourism~"^(attraction|zoo|aquarium|theme_park)$"]({{bbox}});',
+  museum: 'node[tourism="museum"]({{bbox}});',
+  park: 'node[leisure~"^(park|nature_reserve|garden)$"]({{bbox}});node[boundary="national_park"]({{bbox}});',
+  historical: 'node[historic]({{bbox}});',
+  entertainment: 'node[amenity~"^(cinema|theatre|casino|nightclub)$"]({{bbox}});',
+  shopping: 'node[shop~"^(mall|marketplace|department_store)$"]({{bbox}});',
+  beach: 'node[natural="beach"]({{bbox}});node[leisure="beach_resort"]({{bbox}});',
   lodging: 'node[tourism~"^(hotel|motel|hostel|guest_house|chalet)$"]({{bbox}});',
   parking: 'node[amenity="parking"]({{bbox}});',
-  restroom: 'node[amenity~"^(toilets|restroom)$"]({{bbox}});node[amenity="public_bookcase"]({{bbox}});',
+  restroom: 'node[amenity~"^(toilets|restroom)$"]({{bbox}});',
 };
 
 const CATEGORY_LABELS: Record<POICategory, string> = {
   food: 'Food & Drink',
   fuel: 'Fuel & Convenience',
   camping: 'Camping & Picnic',
-  viewpoint: 'Scenic Viewpoints',
+  viewpoint: 'Scenic Lookouts',
   attraction: 'Attractions',
+  museum: 'Museums',
+  park: 'Parks & Gardens',
+  historical: 'Historical Sites',
+  entertainment: 'Entertainment',
+  shopping: 'Shopping',
+  beach: 'Beaches',
   lodging: 'Hotels & Lodging',
   parking: 'Parking',
   restroom: 'Restrooms',
@@ -45,6 +56,12 @@ const CATEGORY_ICONS: Record<POICategory, string> = {
   camping: '🏕️',
   viewpoint: '🏔️',
   attraction: '🎯',
+  museum: '🏛️',
+  park: '🌳',
+  historical: '🏰',
+  entertainment: '🎭',
+  shopping: '🛍️',
+  beach: '🏖️',
   lodging: '🏨',
   parking: '🅿️',
   restroom: '🚻',
@@ -58,7 +75,10 @@ export function getCategoryIcon(cat: POICategory): string {
   return CATEGORY_ICONS[cat];
 }
 
-export const ALL_CATEGORIES: POICategory[] = ['food', 'fuel', 'camping', 'viewpoint', 'attraction', 'lodging', 'parking', 'restroom'];
+export const ALL_CATEGORIES: POICategory[] = [
+  'food', 'fuel', 'camping', 'viewpoint', 'attraction', 'museum', 'park',
+  'historical', 'entertainment', 'shopping', 'beach', 'lodging', 'parking', 'restroom',
+];
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
@@ -76,7 +96,6 @@ function getBbox(points: { latitude: number; longitude: number }[]): string {
     if (p.longitude < minLng) minLng = p.longitude;
     if (p.longitude > maxLng) maxLng = p.longitude;
   }
-  // Add padding
   const pad = 0.05;
   return `${minLat - pad},${minLng - pad},${maxLat + pad},${maxLng + pad}`;
 }
@@ -130,18 +149,15 @@ export async function findPOIs(
         const name = el.tags.name || el.tags['addr:street'] || `${cat}_${el.id}`;
         const tags = el.tags;
 
-        // Calculate distance from route (min distance to any route point)
         let minDist = Infinity;
         for (const rp of routePoints) {
           const d = haversineKm(lat, lon, rp.latitude, rp.longitude);
           if (d < minDist) minDist = d;
         }
 
-        // Only include POIs within 10km of the route
         if (minDist > 10) continue;
 
-        // Determine sub-type
-        const subType = tags.amenity || tags.tourism || tags.leisure || tags.shop || tags.historic || 'poi';
+        const subType = tags.amenity || tags.tourism || tags.leisure || tags.shop || tags.boundary || tags.historic || 'poi';
 
         items.push({
           id: `${el.type}_${el.id}`,
@@ -157,14 +173,12 @@ export async function findPOIs(
         });
       }
 
-      // Sort by distance
       items.sort((a, b) => a.distanceKm - b.distanceKm);
 
       if (items.length > 0) {
-        result[cat] = items.slice(0, 30); // Max 30 per category
+        result[cat] = items.slice(0, 30);
       }
     } catch {
-      // Silently skip failed categories
       continue;
     }
   }
