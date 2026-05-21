@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 
 const MAP_STYLES = {
@@ -40,7 +40,7 @@ export default function TripMap({
   const map = useRef<maplibregl.Map | null>(null);
   const animationRef = useRef<number | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
-  const loadedRef = useRef(false);
+  const [ready, setReady] = useState(false);
   const legGeometriesRef = useRef(legGeometries);
   const waypointsRef = useRef(waypoints);
   const onRouteWaypointDropRef = useRef(onRouteWaypointDrop);
@@ -96,8 +96,26 @@ export default function TripMap({
       m.addLayer({ id: 'route-glow', type: 'line', source: 'route-full', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': colors.routeGlow, 'line-width': 8, 'line-opacity': 0.25, 'line-blur': 4 } });
       m.addLayer({ id: 'route-line', type: 'line', source: 'route-full', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': colors.route, 'line-width': 6, 'line-opacity': 0.9 } });
       m.addLayer({ id: 'route-outline', type: 'line', source: 'route-full', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': 'rgba(255,255,255,0.15)', 'line-width': 5, 'line-opacity': 0.3, 'line-dasharray': [0.5, 2] } });
-      loadedRef.current = true;
+      setReady(true);
       onMapLoaded?.();
+    });
+
+    // Route line right-click → insert stop here
+    m.on('contextmenu', (e) => {
+      const lg = legGeometriesRef.current;
+      if (lg && lg.length > 0 && m) {
+        const features = m.queryRenderedFeatures(e.point, { layers: ['route-line'] });
+        if (features.length > 0) {
+          e.originalEvent.preventDefault();
+          const clicked = findClickedLeg(e.lngLat, lg, waypointsRef.current);
+          if (clicked) {
+            onRouteWaypointDropRef.current?.(
+              { lat: e.lngLat.lat, lng: e.lngLat.lng },
+              { fromId: clicked.fromId, toId: clicked.toId }
+            );
+          }
+        }
+      }
     });
 
     // Route line click → drag-to-insert
@@ -140,14 +158,14 @@ export default function TripMap({
     return () => {
       map.current?.remove();
       map.current = null;
-      loadedRef.current = false;
+      setReady(false);
     };
   }, []); // Only mount once
 
-  // Update route geometry data in-place
+  // Update route geometry data in-place (re-applied when map becomes ready)
   useEffect(() => {
     const m = map.current;
-    if (!m || !loadedRef.current) return;
+    if (!m || !ready) return;
     const hasRoute = routeGeometry && routeGeometry.length >= 2;
     const coords: [number, number][] = hasRoute
       ? routeGeometry.map(c => [c[0], c[1]] as [number, number])
@@ -157,12 +175,12 @@ export default function TripMap({
       const src = m.getSource('route-full') as maplibregl.GeoJSONSource;
       if (src) src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
     } catch {}
-  }, [routeGeometry, trackPoints]);
+  }, [routeGeometry, trackPoints, ready]);
 
-  // Update waypoint markers
+  // Update waypoint markers (re-applied when map becomes ready)
   useEffect(() => {
     const m = map.current;
-    if (!m || !loadedRef.current) return;
+    if (!m || !ready) return;
     markersRef.current.forEach(mk => mk.remove());
     markersRef.current = [];
     waypoints.forEach((wp, i) => {
@@ -181,7 +199,7 @@ export default function TripMap({
       waypoints.forEach(wp => bounds.extend([wp.longitude, wp.latitude]));
       m.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1500 });
     }
-  }, [waypoints, colors.waypoint]);
+  }, [waypoints, colors.waypoint, ready]);
 
   // Fly to bounds (day click)
   useEffect(() => {

@@ -25,15 +25,22 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
     let routePoints: { latitude: number; longitude: number }[];
 
     if (!isNaN(south) && !isNaN(north) && !isNaN(west) && !isNaN(east)) {
-      // Use viewport: sample a grid to cover the area
-      const pts: { latitude: number; longitude: number }[] = [];
-      for (let lat = Math.ceil(south * 2) / 2; lat <= north; lat += 1.5) {
-        for (let lng = Math.ceil(west * 2) / 2; lng <= east; lng += 1.5) {
-          pts.push({ latitude: lat, longitude: lng });
-        }
-      }
-      if (pts.length === 0) pts.push({ latitude: (south + north) / 2, longitude: (west + east) / 2 });
-      routePoints = pts;
+      // Use viewport center with search radius covering the diagonal
+      const centerLat = (south + north) / 2;
+      const centerLng = (west + east) / 2;
+      // Approx degrees → km at this latitude
+      const dlat = north - south;
+      const dlng = east - west;
+      const radiusKm = Math.ceil(Math.max(dlat, dlng) * 111 / 2);
+      // Build bbox from center with generous padding
+      const pad = Math.max(dlat, dlng, 0.5);
+      routePoints = [
+        { latitude: centerLat, longitude: centerLng },
+        { latitude: centerLat - pad, longitude: centerLng - pad },
+        { latitude: centerLat + pad, longitude: centerLng + pad },
+        { latitude: centerLat - pad, longitude: centerLng + pad },
+        { latitude: centerLat + pad, longitude: centerLng - pad },
+      ];
     } else {
       const trackPts = await db.select()
         .from(schema.trackPoints)
