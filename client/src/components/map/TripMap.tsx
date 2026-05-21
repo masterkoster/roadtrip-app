@@ -28,12 +28,13 @@ interface TripMapProps {
   legGeometries?: { fromId: number; toId: number; coordinates: [number, number][] }[];
   onRouteWaypointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
   flyToBounds?: [number, number][] | null;
+  mapRef?: React.MutableRefObject<any>;
 }
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
-  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, flyToBounds,
+  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, flyToBounds, mapRef,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -314,6 +315,7 @@ export default function TripMap({
     });
 
     map.current = m;
+    if (mapRef) mapRef.current = m;
 
     function findClickedLeg(lngLat: { lat: number; lng: number }): { fromId: number; toId: number; fromCoord: [number, number]; toCoord: [number, number] } | null {
       if (!legGeometries || legGeometries.length === 0) return null;
@@ -377,69 +379,78 @@ export default function TripMap({
       }, 500);
     }
 
+    // Double-click: prevent default (no zoom on dblclick)
+    m.on('dblclick', (e) => { e.originalEvent.preventDefault(); });
+
+    // Click debounce: ignore the first click of a double-click
+    let clickTimer: ReturnType<typeof setTimeout> | null = null;
     m.on('click', (e) => {
-      // Check if click hit the route line (only when legGeometries is available)
-      if (legGeometries && legGeometries.length > 0 && m) {
-        const features = m.queryRenderedFeatures(e.point, { layers: ['route-line'] });
-        if (features.length > 0) {
-          const clicked = findClickedLeg(e.lngLat);
-          if (clicked) {
-            // Create draggable marker
-            const el = document.createElement('div');
-            el.innerHTML = `<div style="width:32px;height:32px;background:#00b4ff;border:3px solid white;border-radius:50%;box-shadow:0 2px 16px rgba(0,180,255,0.6);display:flex;align-items:center;justify-content:center;cursor:grab;animation:pulse 1.5s infinite;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M12 4v16m8-8H4"/></svg>
-            </div>
-            <style>
-              @keyframes pulse { 0%,100% { box-shadow: 0 2px 16px rgba(0,180,255,0.6); } 50% { box-shadow: 0 2px 24px rgba(0,180,255,1); } }
-            </style>`;
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        // Check if click hit the route line (only when legGeometries is available)
+        if (legGeometries && legGeometries.length > 0 && m) {
+          const features = m.queryRenderedFeatures(e.point, { layers: ['route-line'] });
+          if (features.length > 0) {
+            const clicked = findClickedLeg(e.lngLat);
+            if (clicked) {
+              // Create draggable marker
+              const el = document.createElement('div');
+              el.innerHTML = `<div style="width:32px;height:32px;background:#00b4ff;border:3px solid white;border-radius:50%;box-shadow:0 2px 16px rgba(0,180,255,0.6);display:flex;align-items:center;justify-content:center;cursor:grab;animation:pulse 1.5s infinite;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M12 4v16m8-8H4"/></svg>
+              </div>
+              <style>
+                @keyframes pulse { 0%,100% { box-shadow: 0 2px 16px rgba(0,180,255,0.6); } 50% { box-shadow: 0 2px 24px rgba(0,180,255,1); } }
+              </style>`;
 
-            const marker = new maplibregl.Marker({ element: el.firstChild as HTMLElement, draggable: true })
-              .setLngLat([e.lngLat.lng, e.lngLat.lat])
-              .addTo(m);
+              const marker = new maplibregl.Marker({ element: el.firstChild as HTMLElement, draggable: true })
+                .setLngLat([e.lngLat.lng, e.lngLat.lat])
+                .addTo(m);
 
-            // Set up preview source
-            try { m.removeLayer('route-preview-layer'); } catch {}
-            try { m.removeSource('route-preview'); } catch {}
-            m.addSource('route-preview', {
-              type: 'geojson',
-              data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [clicked.fromCoord, [e.lngLat.lng, e.lngLat.lat], clicked.toCoord] } },
-            });
-            m.addLayer({
-              id: 'route-preview-layer',
-              type: 'line',
-              source: 'route-preview',
-              layout: { 'line-cap': 'round', 'line-join': 'round' },
-              paint: {
-                'line-color': '#00b4ff',
-                'line-width': 3,
-                'line-opacity': 0.7,
-                'line-dasharray': [2, 3],
-              },
-            });
-
-            dragStateRef.current = { marker, ...clicked };
-
-            marker.on('drag', () => {
-              if (dragStateRef.current) updatePreview(marker, dragStateRef.current);
-            });
-
-            marker.on('dragend', () => {
-              const pos = marker.getLngLat();
-              marker.remove();
+              // Set up preview source
               try { m.removeLayer('route-preview-layer'); } catch {}
               try { m.removeSource('route-preview'); } catch {}
-              dragStateRef.current = null;
-              onRouteWaypointDrop?.(
-                { lat: pos.lat, lng: pos.lng },
-                { fromId: clicked.fromId, toId: clicked.toId }
-              );
-            });
+              m.addSource('route-preview', {
+                type: 'geojson',
+                data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [clicked.fromCoord, [e.lngLat.lng, e.lngLat.lat], clicked.toCoord] } },
+              });
+              m.addLayer({
+                id: 'route-preview-layer',
+                type: 'line',
+                source: 'route-preview',
+                layout: { 'line-cap': 'round', 'line-join': 'round' },
+                paint: {
+                  'line-color': '#00b4ff',
+                  'line-width': 3,
+                  'line-opacity': 0.7,
+                  'line-dasharray': [2, 3],
+                },
+              });
 
-            return; // Don't emit onMapClick
+              dragStateRef.current = { marker, ...clicked };
+
+              marker.on('drag', () => {
+                if (dragStateRef.current) updatePreview(marker, dragStateRef.current);
+              });
+
+              marker.on('dragend', () => {
+                const pos = marker.getLngLat();
+                marker.remove();
+                try { m.removeLayer('route-preview-layer'); } catch {}
+                try { m.removeSource('route-preview'); } catch {}
+                dragStateRef.current = null;
+                onRouteWaypointDrop?.(
+                  { lat: pos.lat, lng: pos.lng },
+                  { fromId: clicked.fromId, toId: clicked.toId }
+                );
+              });
+
+              return; // Don't emit onMapClick
+            }
           }
         }
-      }
-      onMapClick?.(e.lngLat);
+        onMapClick?.(e.lngLat);
+      }, 280);
     });
 
     return () => {

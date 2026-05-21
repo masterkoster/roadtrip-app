@@ -16,22 +16,43 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
       .limit(1);
     if (!trip) return res.status(404).json({ error: 'Trip not found' });
 
-    const trackPts = await db.select()
-      .from(schema.trackPoints)
-      .where(eq(schema.trackPoints.tripId, tripId))
-      .orderBy(schema.trackPoints.timestamp);
+    // If viewport bounds provided, use those instead of full route
+    const south = parseFloat(req.query.south as string);
+    const west = parseFloat(req.query.west as string);
+    const north = parseFloat(req.query.north as string);
+    const east = parseFloat(req.query.east as string);
 
-    // Fall back to waypoints if no track points
-    let routePoints: { latitude: number; longitude: number }[] = trackPts;
-    if (routePoints.length < 2) {
-      const wps = await db.select()
-        .from(schema.waypoints)
-        .where(eq(schema.waypoints.tripId, tripId))
-        .orderBy(schema.waypoints.orderIndex);
-      if (wps.length >= 2) {
-        routePoints = wps;
-      } else {
-        return res.json({ pois: {}, categories: [] });
+    let routePoints: { latitude: number; longitude: number }[];
+
+    if (!isNaN(south) && !isNaN(north) && !isNaN(west) && !isNaN(east)) {
+      // Use viewport center + edges
+      const centerLat = (south + north) / 2;
+      const centerLng = (west + east) / 2;
+      const corners: { latitude: number; longitude: number }[] = [
+        { latitude: south, longitude: west },
+        { latitude: south, longitude: east },
+        { latitude: north, longitude: west },
+        { latitude: north, longitude: east },
+        { latitude: centerLat, longitude: centerLng },
+      ];
+      routePoints = corners;
+    } else {
+      const trackPts = await db.select()
+        .from(schema.trackPoints)
+        .where(eq(schema.trackPoints.tripId, tripId))
+        .orderBy(schema.trackPoints.timestamp);
+
+      routePoints = trackPts;
+      if (routePoints.length < 2) {
+        const wps = await db.select()
+          .from(schema.waypoints)
+          .where(eq(schema.waypoints.tripId, tripId))
+          .orderBy(schema.waypoints.orderIndex);
+        if (wps.length >= 2) {
+          routePoints = wps;
+        } else {
+          return res.json({ pois: {}, categories: [] });
+        }
       }
     }
 

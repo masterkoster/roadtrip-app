@@ -129,7 +129,7 @@ export default function PlanningPage() {
         if (dayCoords.length >= 2) {
           const lngs = dayCoords.map(c => c[0]);
           const lats = dayCoords.map(c => c[1]);
-          const pad = 3.0;
+          const pad = 1.0;
           const expanded: [number, number][] = [
             [Math.min(...lngs) - pad, Math.min(...lats) - pad],
             [Math.max(...lngs) + pad, Math.max(...lats) + pad],
@@ -189,6 +189,9 @@ export default function PlanningPage() {
       prefetchDayPlaces(dayItinerary.days);
     }
   }, [dayItinerary?.days?.length]);
+
+  // Map instance ref (for getting viewport bounds)
+  const mapRef = useRef<any>(null);
 
   // POI state
   const [pois, setPois] = useState<Record<string, any[]>>({});
@@ -304,10 +307,16 @@ export default function PlanningPage() {
 
   // POI fetching
   const fetchPOIs = async () => {
-    if (trackPoints.length < 2) { toast.error('Need track points to find nearby places'); return; }
+    if (waypoints.length < 2 && trackPoints.length < 2) { toast.error('Add at least 2 stops first'); return; }
     setPoiLoading(true);
     try {
-      const { data } = await api.get(`/poi/${id}`);
+      // Use viewport bounds if map is available
+      let params = '';
+      if (mapRef.current) {
+        const b = mapRef.current.getBounds();
+        params = `?south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}`;
+      }
+      const { data } = await api.get(`/poi/${id}${params}`);
       setPois(data.pois || {});
       setPoiCategories(data.categories || []);
       if (data.categories?.length > 0 && !activePoiCat) setActivePoiCat(data.categories[0].id);
