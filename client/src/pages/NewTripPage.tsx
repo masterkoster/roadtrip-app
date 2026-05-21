@@ -17,7 +17,7 @@ export default function NewTripPage() {
     try {
       const { data: trip } = await api.post('/trips', { title: title.trim(), vehicle });
       toast.success('Trip created! Start adding stops.');
-      navigate(`/trips/${trip.id}`);
+      navigate(`/trips/${trip.id}/plan`);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Failed to create trip');
     } finally {

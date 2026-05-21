@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import TripDetailPage from './pages/TripDetailPage';
+import PlanningPage from './pages/PlanningPage';
 import NewTripPage from './pages/NewTripPage';
 import EditTripPage from './pages/EditTripPage';
 import GuideViewPage from './pages/GuideViewPage';
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="trips/new" element={<NewTripPage />} />
         <Route path="trips/:id" element={<TripDetailPage />} />
         <Route path="trips/:id/edit" element={<EditTripPage />} />
+        <Route path="trips/:id/plan" element={<PlanningPage />} />
         <Route path="trips/:id/photos" element={<PhotosPage />} />
         <Route path="trips/:id/guides/new" element={<NewGuidePage />} />
         <Route path="guides/:id" element={<GuideViewPage />} />

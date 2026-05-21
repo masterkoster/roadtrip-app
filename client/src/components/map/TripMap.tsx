@@ -2,10 +2,9 @@ import { useEffect, useRef, useMemo, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 
 const MAP_STYLES = {
-  eclipse: 'https://tiles.versatiles.org/assets/styles/eclipse/style.json',
-  colorful: 'https://tiles.versatiles.org/assets/styles/colorful/style.json',
-  neutrino: 'https://tiles.versatiles.org/assets/styles/neutrino/style.json',
-  shadow: 'https://tiles.versatiles.org/assets/styles/shadow/style.json',
+  colorful: 'https://tiles.openfreemap.org/styles/liberty',
+  light: 'https://tiles.openfreemap.org/styles/positron',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
 } as const;
 
 type MapStyle = keyof typeof MAP_STYLES;
@@ -28,7 +27,7 @@ interface TripMapProps {
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
-  className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'eclipse',
+  className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -73,7 +72,7 @@ export default function TripMap({
       zoom = maxDiff > 0 ? Math.max(4, Math.min(15, Math.log2(360 / maxDiff))) : 12;
     }
 
-    const styleUrl = MAP_STYLES[currentStyle] || MAP_STYLES.eclipse;
+    const styleUrl = MAP_STYLES[currentStyle] || MAP_STYLES.colorful;
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
