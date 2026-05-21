@@ -277,24 +277,12 @@ export default function TripMap({
 
     landmarks.forEach((lm) => {
       const el = document.createElement('div');
-      el.innerHTML = `<div style="width:36px;height:36px;background:linear-gradient(135deg,#8b5cf6,#6366f1);border:2px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;">🏛️</div>`;
-      const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
-        '<div style="min-width:200px;max-width:260px;font-family:system-ui,sans-serif">' +
-        (lm.thumbnail ? `<img src="${lm.thumbnail}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:6px;margin-bottom:8px" onerror="this.style.display='none'" />` : '') +
-        '<strong style="font-size:14px;color:#1f2937">' + lm.name + '</strong>' +
-        '<p style="font-size:11px;color:#6b7280;margin:4px 0 8px;line-height:1.4">' + lm.description + '</p>' +
-        '<button data-lm="' + lm.id + '" style="padding:5px 12px;font-size:11px;font-weight:600;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer">+ Add as waypoint</button>' +
-        '</div>'
-      );
+      el.innerHTML = `<div style="width:56px;height:56px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:3px solid white;border-radius:50%;box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:24px;line-height:1;transition:transform 0.15s" onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'" title="${lm.name}">🏛️</div>`;
       const mk = new maplibregl.Marker({ element: el.firstChild as HTMLElement })
         .setLngLat([lm.longitude, lm.latitude])
-        .setPopup(popup)
         .addTo(m);
-      popup.on('open', () => {
-        popup.getElement()?.querySelector('button[data-lm]')?.addEventListener('click', () => {
-          onLandmarkClickRef.current?.(lm);
-          popup.remove();
-        });
+      el.firstChild?.addEventListener('click', () => {
+        onLandmarkClickRef.current?.(lm);
       });
       landmarkMarkersRef.current.push(mk);
     });
