@@ -578,16 +578,15 @@ router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Res
     const { lat, lng, radius, day } = req.body;
     if (lat == null || lng == null) return res.status(400).json({ error: 'lat and lng required' });
     const radiusKm = radius || 322; // 200 miles ≈ 322 km
-    const cacheKey = `${req.params.id}-${day ?? 'main'}`;
+    const cacheKey = `${req.params.id}-${day ?? 'main'}-${lat.toFixed(2)}-${lng.toFixed(2)}`;
     const cached = dayPlacesCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       return res.json({ places: cached.data, source: 'cache' });
     }
 
     const wikiPlaces = await fetchWikipediaPlaces(lat, lng, radiusKm);
-    const merged = wikiPlaces.slice(0, 40);
-    merged.sort((a, b) => a.distance - b.distance);
-    const top40 = merged.slice(0, 40);
+    wikiPlaces.sort((a, b) => a.distance - b.distance);
+    const top40 = wikiPlaces.slice(0, 40);
 
     dayPlacesCache.set(cacheKey, { data: top40, ts: Date.now() });
     return res.json({ places: top40, source: 'fresh' });
