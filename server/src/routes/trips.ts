@@ -597,7 +597,19 @@ router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Res
       return res.json({ places: cached.data, source: 'cache' });
     }
 
-    const places = await fetchNominatimPlaces(lat, lng, radiusKm, 'tourist attraction');
+    // Search multiple attraction-related terms
+    const attractionTerms = ['park', 'museum', 'landmark', 'historic', 'attraction'];
+    const seen = new Set<string>();
+    const allPlaces: any[] = [];
+    for (let ti = 0; ti < attractionTerms.length; ti++) {
+      if (ti > 0) await new Promise(r => setTimeout(r, 500));
+      const results = await fetchNominatimPlaces(lat, lng, radiusKm, attractionTerms[ti]);
+      for (const p of results) {
+        const key = `${p.latitude.toFixed(4)}_${p.longitude.toFixed(4)}`;
+        if (!seen.has(key)) { seen.add(key); allPlaces.push(p); }
+      }
+    }
+    const places = allPlaces;
     places.sort((a: any, b: any) => a.distance - b.distance);
     const top40 = places.slice(0, 40);
 
