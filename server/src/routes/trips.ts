@@ -3,7 +3,8 @@ import { db, schema } from '../db';
 import { eq, and, desc } from 'drizzle-orm';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { parseGpx } from '../utils/gpx';
-import { matchToRoads } from '../utils/osrm';
+import { matchToRoads, routeBetweenWaypoints } from '../utils/osrm';
+import { findPOIs } from '../utils/poi';
 
 const router = Router();
 
@@ -83,7 +84,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
 router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const tripId = parseInt(req.params.id);
-    const { title, description, startDate, endDate, isPublic, vehicle } = req.body;
+    const { title, description, startDate, endDate, isPublic, vehicle, maxDailyDrivingHours, maxDailyDistanceKm, restStopFrequencyHours } = req.body;
     const [trip] = await db.select()
       .from(schema.trips)
       .where(and(eq(schema.trips.id, tripId), eq(schema.trips.userId, req.userId!)))
@@ -98,6 +99,9 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
         endDate: endDate ? toISO(endDate) : trip.endDate,
         isPublic: isPublic ?? trip.isPublic,
         vehicle: vehicle ?? trip.vehicle,
+        maxDailyDrivingHours: maxDailyDrivingHours !== undefined ? maxDailyDrivingHours : trip.maxDailyDrivingHours,
+        maxDailyDistanceKm: maxDailyDistanceKm !== undefined ? maxDailyDistanceKm : trip.maxDailyDistanceKm,
+        restStopFrequencyHours: restStopFrequencyHours !== undefined ? restStopFrequencyHours : trip.restStopFrequencyHours,
         updatedAt: nowISO(),
       })
       .where(eq(schema.trips.id, tripId))
@@ -330,6 +334,169 @@ router.post('/:id/match', authMiddleware, async (req: AuthRequest, res: Response
   } catch (err: any) {
     console.error('Match error:', err.message);
     return res.status(500).json({ error: `Map matching failed: ${err.message}` });
+  }
+});
+
+// Estimate stops: calculate per-leg distance/time, suggest hotel stops based on params
+router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const tripId = parseInt(req.params.id);
+    const [trip] = await db.select()
+      .from(schema.trips)
+      .where(and(eq(schema.trips.id, tripId), eq(schema.trips.userId, req.userId!)))
+      .limit(1);
+    if (!trip) return res.status(404).json({ error: 'Trip not found' });
+
+    const wps = await db.select()
+      .from(schema.waypoints)
+      .where(eq(schema.waypoints.tripId, tripId))
+      .orderBy(schema.waypoints.orderIndex);
+
+    if (wps.length < 2) return res.status(400).json({ error: 'Need at least 2 waypoints' });
+
+    const maxDailyHours = trip.maxDailyDrivingHours || 8;
+    const maxDailyKm = trip.maxDailyDistanceKm || 800;
+
+    const coordPairs = wps.map(w => ({ latitude: w.latitude, longitude: w.longitude }));
+
+    let routeResult: Awaited<ReturnType<typeof routeBetweenWaypoints>> = null;
+    try {
+      routeResult = await routeBetweenWaypoints(coordPairs);
+    } catch { /* fallback below */ }
+
+    interface LegInfo {
+      fromId: number;
+      fromName: string;
+      toId: number;
+      toName: string;
+      distanceKm: number;
+      durationHours: number;
+    }
+
+    const legs: LegInfo[] = [];
+
+    if (routeResult?.legs) {
+      for (let i = 0; i < routeResult.legs.length; i++) {
+        legs.push({
+          fromId: wps[i].id,
+          fromName: wps[i].name,
+          toId: wps[i + 1].id,
+          toName: wps[i + 1].name,
+          distanceKm: Math.round(routeResult.legs[i].distance / 1000 * 10) / 10,
+          durationHours: Math.round(routeResult.legs[i].duration / 36) / 100,
+        });
+      }
+    } else {
+      for (let i = 1; i < wps.length; i++) {
+        const dlat = (wps[i].latitude - wps[i - 1].latitude) * Math.PI / 180;
+        const dlon = (wps[i].longitude - wps[i - 1].longitude) * Math.PI / 180;
+        const a = Math.sin(dlat / 2) ** 2 + Math.cos(wps[i - 1].latitude * Math.PI / 180) * Math.cos(wps[i].latitude * Math.PI / 180) * Math.sin(dlon / 2) ** 2;
+        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        legs.push({
+          fromId: wps[i - 1].id,
+          fromName: wps[i - 1].name,
+          toId: wps[i].id,
+          toName: wps[i].name,
+          distanceKm: Math.round(dist * 10) / 10,
+          durationHours: Math.round(dist / 80 * 100) / 100,
+        });
+      }
+    }
+
+    // Build day-by-day itinerary
+    interface DayInfo {
+      day: number;
+      legs: LegInfo[];
+      totalDistanceKm: number;
+      totalDrivingHours: number;
+      stops: { waypointId: number; name: string; durationMinutes: number }[];
+      needsHotel: boolean;
+      suggestedHotels: { name: string; latitude: number; longitude: number; distanceKm: number; type: string }[];
+    }
+
+    const days: DayInfo[] = [];
+    let currentDay = 0;
+    let dailyDrivingHours = 0;
+    let dailyDistanceKm = 0;
+    let dayLegs: LegInfo[] = [];
+    let dayStopIds: Set<number> = new Set();
+
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      const stopDurationHours = (wps[i].duration || 0) / 60;
+
+      if (dailyDrivingHours + leg.durationHours > maxDailyHours || dailyDistanceKm + leg.distanceKm > maxDailyKm) {
+        // Finalize current day
+        const lastWaypoint = wps[i];
+        let hotels: { name: string; latitude: number; longitude: number; distanceKm: number; type: string }[] = [];
+        try {
+          const poiResult = await findPOIs([{ latitude: lastWaypoint.latitude, longitude: lastWaypoint.longitude }], ['lodging', 'camping']);
+          const allAccom = [...(poiResult.lodging || []), ...(poiResult.camping || [])];
+          hotels = allAccom.slice(0, 5).map(p => ({
+            name: p.name,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            distanceKm: Math.round(p.distanceKm * 10) / 10,
+            type: p.type,
+          }));
+        } catch { /* no hotels found */ }
+
+        days.push({
+          day: currentDay,
+          legs: [...dayLegs],
+          totalDistanceKm: Math.round(dailyDistanceKm * 10) / 10,
+          totalDrivingHours: Math.round(dailyDrivingHours * 100) / 100,
+          stops: wps.filter((_, idx) => dayStopIds.has(idx)).map(w => ({
+            waypointId: w.id,
+            name: w.name,
+            durationMinutes: w.duration || 0,
+          })),
+          needsHotel: true,
+          suggestedHotels: hotels,
+        });
+
+        currentDay++;
+        dailyDrivingHours = 0;
+        dailyDistanceKm = 0;
+        dayLegs = [];
+        dayStopIds = new Set();
+      }
+
+      dayLegs.push(leg);
+      dayStopIds.add(i);
+      dayStopIds.add(i + 1);
+      dailyDrivingHours += leg.durationHours + stopDurationHours;
+      dailyDistanceKm += leg.distanceKm;
+    }
+
+    // Final day
+    if (dayLegs.length > 0) {
+      days.push({
+        day: currentDay,
+        legs: [...dayLegs],
+        totalDistanceKm: Math.round(dailyDistanceKm * 10) / 10,
+        totalDrivingHours: Math.round(dailyDrivingHours * 100) / 100,
+        stops: wps.filter((_, idx) => dayStopIds.has(idx)).map(w => ({
+          waypointId: w.id,
+          name: w.name,
+          durationMinutes: w.duration || 0,
+        })),
+        needsHotel: false,
+        suggestedHotels: [],
+      });
+    }
+
+    return res.json({
+      totalDistance: routeResult?.totalDistance ? Math.round(routeResult.totalDistance / 1000 * 10) / 10 : legs.reduce((s, l) => s + l.distanceKm, 0),
+      totalDrivingHours: routeResult?.totalDuration ? Math.round(routeResult.totalDuration / 36) / 100 : legs.reduce((s, l) => s + l.durationHours, 0),
+      legCount: legs.length,
+      dayCount: days.length,
+      days,
+      legs,
+    });
+  } catch (err) {
+    console.error('Estimate stops error:', err);
+    return res.status(500).json({ error: 'Failed to estimate stops' });
   }
 });
 

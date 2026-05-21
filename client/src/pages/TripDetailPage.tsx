@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import TripMap from '../components/map/TripMap';
@@ -6,13 +6,14 @@ import ElevationProfile from '../components/trip/ElevationProfile';
 import PhotoGallery from '../components/trip/PhotoGallery';
 import WaypointPanel from '../components/trip/WaypointPanel';
 import POISuggestions from '../components/trip/POISuggestions';
+import ItineraryTimeline from '../components/trip/ItineraryTimeline';
 import StoryPlayer from '../components/trip/StoryPlayer';
 import { VehicleBadge } from '../components/trip/VehicleIcon';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 interface TrackPoint { id: number; latitude: number; longitude: number; elevation: number | null; timestamp: string | null; }
-interface Waypoint { id: number; name: string; description: string | null; latitude: number; longitude: number; orderIndex: number; }
+interface Waypoint { id: number; name: string; description: string | null; latitude: number; longitude: number; orderIndex: number; duration: number | null; dayIndex: number | null; }
 interface Photo { id: number; url: string; thumbnailUrl: string | null; latitude: number | null; longitude: number | null; caption: string | null; }
 interface Guide { id: number; title: string; description: string | null; difficulty: string; }
 interface Trip { id: number; title: string; description: string | null; distance: number | null; duration: number | null; startDate: string | null; endDate: string | null; isPublic: string; vehicle: string; }
@@ -100,6 +101,19 @@ export default function TripDetailPage() {
 
   const [mapStyle, setMapStyle] = useState<'eclipse' | 'colorful' | 'neutrino'>('eclipse');
   const [isSnapping, setIsSnapping] = useState(false);
+  const [rightTab, setRightTab] = useState<'stops' | 'itinerary'>('stops');
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const triggerRefresh = useCallback(() => {
+    setRefreshKey(k => k + 1);
+    api.get(`/trips/${id}`).then(({ data }) => {
+      setTrip(data);
+      setTrackPoints(data.trackPoints || []);
+      setWaypoints(data.waypoints || []);
+      setPhotos(data.photos || []);
+      setGuides(data.guides || []);
+    }).catch(console.error);
+  }, [id]);
 
   const handleSnapToRoads = async () => {
     if (trackPoints.length < 2) { toast.error('Need at least 2 track points'); return; }
@@ -292,47 +306,74 @@ export default function TripDetailPage() {
             </div>
           </div>
 
-          {/* RIGHT: Waypoints + POI + Guides */}
+          {/* RIGHT: Tabbed panel */}
           <div className="space-y-6">
-            <WaypointPanel waypoints={waypoints} tripId={Number(id)} onUpdate={() => api.get(`/trips/${id}`).then(({ data }) => setWaypoints(data.waypoints || []))} />
-
-            <POISuggestions tripId={Number(id)} trackPoints={trackPoints} onWaypointAdded={() => api.get(`/trips/${id}`).then(({ data }) => setWaypoints(data.waypoints || []))} />
-
-            {/* Guides */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-bold text-gray-900">
-                  Guides <span className="text-gray-400 font-normal">{guides.length}</span>
-                </h2>
-                <Link to={`/trips/${id}/guides/new`} className="text-sm text-roadtrip-600 hover:text-roadtrip-700 font-medium transition-colors">+ Create</Link>
-              </div>
-              {guides.length > 0 ? (
-                <div className="space-y-2">
-                  {guides.map((g) => (
-                    <Link key={g.id} to={`/guides/${g.id}`} className="block p-3 rounded-lg border border-gray-100 hover:border-roadtrip-200 hover:bg-roadtrip-50/50 transition-all group">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h3 className="font-medium text-sm text-gray-900 group-hover:text-roadtrip-700 transition-colors">{g.title}</h3>
-                          {g.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{g.description}</p>}
-                        </div>
-                        <span className={`shrink-0 text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${
-                          g.difficulty === 'easy' ? 'bg-green-100 text-green-700' :
-                          g.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                          g.difficulty === 'hard' ? 'bg-orange-100 text-orange-700' :
-                          'bg-red-100 text-red-700'
-                        }`}>{g.difficulty}</span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-6 text-gray-400">
-                  <svg className="w-10 h-10 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                  <p className="text-sm">No guides</p>
-                  <Link to={`/trips/${id}/guides/new`} className="text-roadtrip-600 hover:underline text-sm mt-1 inline-block">Create a guide</Link>
-                </div>
-              )}
+            {/* Tabs */}
+            <div className="flex bg-gray-100 rounded-xl p-1">
+              <button
+                onClick={() => setRightTab('stops')}
+                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${rightTab === 'stops' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Stops
+              </button>
+              <button
+                onClick={() => setRightTab('itinerary')}
+                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${rightTab === 'itinerary' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Itinerary
+              </button>
             </div>
+
+            {rightTab === 'stops' ? (
+              <>
+                <WaypointPanel waypoints={waypoints} tripId={Number(id)} onUpdate={triggerRefresh} />
+
+                <POISuggestions tripId={Number(id)} trackPoints={trackPoints} onWaypointAdded={triggerRefresh} />
+
+                {/* Guides */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-bold text-gray-900">
+                      Guides <span className="text-gray-400 font-normal">{guides.length}</span>
+                    </h2>
+                    <Link to={`/trips/${id}/guides/new`} className="text-sm text-roadtrip-600 hover:text-roadtrip-700 font-medium transition-colors">+ Create</Link>
+                  </div>
+                  {guides.length > 0 ? (
+                    <div className="space-y-2">
+                      {guides.map((g) => (
+                        <Link key={g.id} to={`/guides/${g.id}`} className="block p-3 rounded-lg border border-gray-100 hover:border-roadtrip-200 hover:bg-roadtrip-50/50 transition-all group">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h3 className="font-medium text-sm text-gray-900 group-hover:text-roadtrip-700 transition-colors">{g.title}</h3>
+                              {g.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{g.description}</p>}
+                            </div>
+                            <span className={`shrink-0 text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${
+                              g.difficulty === 'easy' ? 'bg-green-100 text-green-700' :
+                              g.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                              g.difficulty === 'hard' ? 'bg-orange-100 text-orange-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>{g.difficulty}</span>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 text-gray-400">
+                      <svg className="w-10 h-10 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                      <p className="text-sm">No guides</p>
+                      <Link to={`/trips/${id}/guides/new`} className="text-roadtrip-600 hover:underline text-sm mt-1 inline-block">Create a guide</Link>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <ItineraryTimeline
+                key={refreshKey}
+                tripId={Number(id)}
+                waypoints={waypoints}
+                onUpdate={triggerRefresh}
+              />
+            )}
           </div>
         </div>
       </div>

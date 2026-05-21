@@ -11,6 +11,9 @@ export default function EditTripPage() {
   const [description, setDescription] = useState('');
   const [isPublic, setIsPublic] = useState('private');
   const [vehicle, setVehicle] = useState<VehicleType>('car');
+  const [maxDailyDrivingHours, setMaxDailyDrivingHours] = useState('8');
+  const [maxDailyDistanceKm, setMaxDailyDistanceKm] = useState('800');
+  const [restStopFrequencyHours, setRestStopFrequencyHours] = useState('2');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -20,6 +23,9 @@ export default function EditTripPage() {
       setDescription(data.description || '');
       setIsPublic(data.isPublic || 'private');
       setVehicle(data.vehicle || 'car');
+      setMaxDailyDrivingHours(String(data.maxDailyDrivingHours ?? 8));
+      setMaxDailyDistanceKm(String(data.maxDailyDistanceKm ?? 800));
+      setRestStopFrequencyHours(String(data.restStopFrequencyHours ?? 2));
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
 
@@ -27,7 +33,15 @@ export default function EditTripPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.put(`/trips/${id}`, { title, description, isPublic, vehicle });
+      await api.put(`/trips/${id}`, {
+        title,
+        description,
+        isPublic,
+        vehicle,
+        maxDailyDrivingHours: parseFloat(maxDailyDrivingHours) || 8,
+        maxDailyDistanceKm: parseFloat(maxDailyDistanceKm) || 800,
+        restStopFrequencyHours: parseFloat(restStopFrequencyHours) || 2,
+      });
       toast.success('Trip updated!');
       navigate(`/trips/${id}`);
     } catch (err: any) {
@@ -64,6 +78,27 @@ export default function EditTripPage() {
             <option value="public">Public (everyone can see)</option>
           </select>
         </div>
+
+        {/* Planner Parameters */}
+        <div className="border-t border-gray-100 pt-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3">Trip Planner Settings</h3>
+          <p className="text-xs text-gray-500 mb-3">These parameters control how the itinerary and hotel suggestions are calculated.</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="label text-xs">Max driving hours/day</label>
+              <input className="input" type="number" min="1" max="24" step="0.5" value={maxDailyDrivingHours} onChange={(e) => setMaxDailyDrivingHours(e.target.value)} />
+            </div>
+            <div>
+              <label className="label text-xs">Max distance/day (km)</label>
+              <input className="input" type="number" min="1" step="50" value={maxDailyDistanceKm} onChange={(e) => setMaxDailyDistanceKm(e.target.value)} />
+            </div>
+            <div>
+              <label className="label text-xs">Rest stop frequency (hrs)</label>
+              <input className="input" type="number" min="0.5" max="8" step="0.5" value={restStopFrequencyHours} onChange={(e) => setRestStopFrequencyHours(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
         <div className="flex gap-3">
           <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
           <button type="button" onClick={() => navigate(`/trips/${id}`)} className="btn-secondary">Cancel</button>

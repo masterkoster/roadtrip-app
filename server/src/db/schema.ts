@@ -21,6 +21,9 @@ export const trips = sqliteTable('trips', {
   duration: integer('duration'),
   vehicle: text('vehicle').notNull().default('car'),
   isPublic: text('is_public').notNull().default('private'),
+  maxDailyDrivingHours: real('max_daily_driving_hours').default(8),
+  maxDailyDistanceKm: real('max_daily_distance_km').default(800),
+  restStopFrequencyHours: real('rest_stop_frequency_hours').default(2),
   createdAt: text('created_at').notNull().$default(() => new Date().toISOString()),
   updatedAt: text('updated_at').notNull().$default(() => new Date().toISOString()),
 }, (table) => ({
@@ -47,6 +50,8 @@ export const waypoints = sqliteTable('waypoints', {
   latitude: real('latitude').notNull(),
   longitude: real('longitude').notNull(),
   orderIndex: integer('order_index').notNull().default(0),
+  duration: integer('duration'),
+  dayIndex: integer('day_index'),
   createdAt: text('created_at').notNull().$default(() => new Date().toISOString()),
 }, (table) => ({
   tripIdIdx: index('waypoints_trip_id_idx').on(table.tripId),

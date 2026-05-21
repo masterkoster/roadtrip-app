@@ -11,6 +11,20 @@ export interface MatchResult {
   confidence: number;
 }
 
+export interface RouteLeg {
+  distance: number;
+  duration: number;
+  summary: string;
+  geometry: { coordinates: number[][] };
+}
+
+export interface RouteResult {
+  legs: RouteLeg[];
+  totalDistance: number;
+  totalDuration: number;
+  geometry: { coordinates: number[][] };
+}
+
 interface OSRMMatching {
   confidence?: number;
   geometry?: {
@@ -21,6 +35,22 @@ interface OSRMMatching {
 interface OSRMResponse {
   code: string;
   matchings?: OSRMMatching[];
+}
+
+interface OSRMRouteResponse {
+  code: string;
+  routes?: {
+    legs: {
+      distance: number;
+      duration: number;
+      summary: string;
+    }[];
+    geometry: {
+      coordinates: number[][];
+    };
+    distance: number;
+    duration: number;
+  }[];
 }
 
 export async function matchToRoads(
@@ -73,4 +103,48 @@ export async function matchToRoads(
   }
 
   return { snapped, originalCount: coordinates.length, confidence: Math.round(confidence * 100) / 100 };
+}
+
+export async function routeBetweenWaypoints(
+  waypoints: { latitude: number; longitude: number }[]
+): Promise<RouteResult | null> {
+  if (waypoints.length < 2) return null;
+
+  const coordStr = waypoints
+    .map((w) => `${w.longitude},${w.latitude}`)
+    .join(';');
+
+  const url = `${OSRM_BASE}/route/v1/driving/${coordStr}?geometries=geojson&overview=full&steps=false&alternatives=false`;
+
+  const response = await fetch(url, {
+    headers: { 'Accept': 'application/json' },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OSRM route failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as OSRMRouteResponse;
+
+  if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+    throw new Error(`OSRM route returned: ${data.code || 'empty'}`);
+  }
+
+  const route = data.routes[0];
+
+  return {
+    legs: (route.legs || []).map((leg) => ({
+      distance: leg.distance,
+      duration: leg.duration,
+      summary: leg.summary,
+      geometry: { coordinates: [] },
+    })),
+    totalDistance: route.distance,
+    totalDuration: route.duration,
+    geometry: {
+      coordinates: route.geometry.coordinates || [],
+    },
+  };
 }
