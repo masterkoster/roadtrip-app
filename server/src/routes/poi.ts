@@ -3,7 +3,7 @@ import { db, schema } from '../db';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { findPOIs, ALL_CATEGORIES, getCategoryLabel, getCategoryIcon, type POICategory } from '../utils/poi';
-import { getEnrichedLandmarks, filterLandmarksByBounds } from '../utils/landmarks';
+import { getEnrichedLandmarks, filterLandmarksByBounds, getNearbyHotels } from '../utils/landmarks';
 
 const router = Router();
 
@@ -15,6 +15,21 @@ router.get('/landmarks', async (_req: any, res: Response) => {
   } catch (err: any) {
     console.error('Public landmarks error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch landmarks' });
+  }
+});
+
+// Public: get nearby hotels for a location
+router.get('/nearby', async (req: any, res: Response) => {
+  try {
+    const lat = parseFloat(req.query.lat as string);
+    const lng = parseFloat(req.query.lng as string);
+    if (isNaN(lat) || isNaN(lng)) return res.status(400).json({ error: 'lat and lng required' });
+    const radiusKm = Math.min(parseFloat(req.query.radiusKm as string) || 20, 50);
+    const hotels = await getNearbyHotels(lat, lng, radiusKm);
+    return res.json({ hotels });
+  } catch (err: any) {
+    console.error('Nearby error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch nearby places' });
   }
 });
 

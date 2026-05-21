@@ -20,6 +20,10 @@ interface Landmark {
   longitude: number;
   description: string;
   thumbnail: string | null;
+  extract: string | null;
+  wikiUrl: string | null;
+  website: string | null;
+  ticketInfo: string | null;
 }
 
 interface TripMapProps {
@@ -277,14 +281,30 @@ export default function TripMap({
 
     landmarks.forEach((lm) => {
       const el = document.createElement('div');
+      const outer = document.createElement('div');
+      outer.style.cssText = 'position:relative;width:56px;height:56px;cursor:pointer';
+
       const inner = document.createElement('div');
-      inner.style.cssText = 'width:56px;height:56px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border:3px solid white;border-radius:50%;box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);display:flex;align-items:center;justify-content:center;font-size:24px;line-height:1;transition:transform .15s;cursor:pointer';
-      inner.textContent = '🏛️';
+      inner.style.cssText = 'position:absolute;inset:0;border:2.5px solid white;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#7c3aed,#4f46e5);box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);transition:transform .15s;display:flex;align-items:center;justify-content:center';
       inner.title = lm.name;
+
+      if (lm.thumbnail) {
+        const img = document.createElement('img');
+        img.src = lm.thumbnail;
+        img.alt = lm.name;
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+        img.onerror = () => { inner.textContent = '🏛️'; inner.style.fontSize = '24px'; };
+        inner.appendChild(img);
+      } else {
+        inner.textContent = '🏛️';
+        inner.style.fontSize = '24px';
+      }
+
       inner.addEventListener('mouseenter', () => { inner.style.transform = 'scale(1.15)'; });
       inner.addEventListener('mouseleave', () => { inner.style.transform = 'scale(1)'; });
       inner.addEventListener('click', () => { onLandmarkClickRef.current?.(lm); });
-      el.appendChild(inner);
+      outer.appendChild(inner);
+      el.appendChild(outer);
       const mk = new maplibregl.Marker({ element: el })
         .setLngLat([lm.longitude, lm.latitude])
         .addTo(m);
