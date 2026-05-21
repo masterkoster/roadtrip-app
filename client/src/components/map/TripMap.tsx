@@ -103,7 +103,7 @@ export default function TripMap({
       onMapLoaded?.();
     });
 
-    // Route line right-click → show context menu
+    // Right-click anywhere on map → show route context menu
     let _clickedLegInfo: { fromId: number; toId: number } | null = null;
     let _clickedLngLat: { lat: number; lng: number } | null = null;
     const removeContextMenu = () => {
@@ -111,42 +111,37 @@ export default function TripMap({
       if (el) el.remove();
     };
     m.on('contextmenu', (e) => {
+      e.originalEvent.preventDefault();
       const lg = legGeometriesRef.current;
-      if (lg && lg.length > 0 && m) {
-        const features = m.queryRenderedFeatures(e.point, { layers: ['route-line'] });
-        if (features.length > 0) {
-          e.originalEvent.preventDefault();
-          const clicked = findClickedLeg(e.lngLat, lg, waypointsRef.current);
-          if (clicked) {
-            _clickedLegInfo = { fromId: clicked.fromId, toId: clicked.toId };
-            _clickedLngLat = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-            removeContextMenu();
-            const menu = document.createElement('div');
-            menu.id = 'route-context-menu';
-            menu.style.cssText = 'position:fixed;left:' + e.originalEvent.clientX + 'px;top:' + e.originalEvent.clientY + 'px;z-index:999;background:white;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);padding:4px;min-width:160px;font-family:system-ui,sans-serif;';
-            menu.innerHTML =
-              '<button data-action="route-through" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;border:none;background:none;cursor:pointer;border-radius:6px;color:#374151">' +
-              '<span style="font-weight:500">Route through here</span><br/><span style="font-size:11px;color:#9ca3af">Add routing constraint (no stop)</span></button>' +
-              '<div style="height:1px;background:#f3f4f6;margin:2px 0"></div>' +
-              '<button data-action="add-stop" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;border:none;background:none;cursor:pointer;border-radius:6px;color:#374151">' +
-              '<span style="font-weight:500">Add as stop</span><br/><span style="font-size:11px;color:#9ca3af">Create waypoint with name</span></button>';
-            menu.addEventListener('click', (ev) => {
-              const btn = (ev.target as HTMLElement).closest('button');
-              if (!btn || !_clickedLegInfo || !_clickedLngLat) { menu.remove(); return; }
-              const action = btn.dataset.action;
-              if (action === 'route-through') {
-                onRouteViaPointDropRef.current?.(_clickedLngLat, _clickedLegInfo);
-              } else if (action === 'add-stop') {
-                onRouteWaypointDropRef.current?.(_clickedLngLat, _clickedLegInfo);
-              }
-              menu.remove();
-            });
-            document.body.appendChild(menu);
-            // Close on any click outside
-            document.addEventListener('click', () => removeContextMenu(), { once: true });
-          }
+      const wps = waypointsRef.current;
+      if (!lg || lg.length === 0 || wps.length < 2 || !m) return;
+      const clicked = findClickedLeg(e.lngLat, lg, wps);
+      if (!clicked) return;
+      removeContextMenu();
+      _clickedLegInfo = { fromId: clicked.fromId, toId: clicked.toId };
+      _clickedLngLat = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+      const menu = document.createElement('div');
+      menu.id = 'route-context-menu';
+      menu.style.cssText = 'position:fixed;left:' + e.originalEvent.clientX + 'px;top:' + e.originalEvent.clientY + 'px;z-index:999;background:white;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);padding:4px;min-width:160px;font-family:system-ui,sans-serif;';
+      menu.innerHTML =
+        '<button data-action="route-through" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;border:none;background:none;cursor:pointer;border-radius:6px;color:#374151">' +
+        '<span style="font-weight:500">Route through here</span><br/><span style="font-size:11px;color:#9ca3af">Force route to pass through this point</span></button>' +
+        '<div style="height:1px;background:#f3f4f6;margin:2px 0"></div>' +
+        '<button data-action="add-stop" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;border:none;background:none;cursor:pointer;border-radius:6px;color:#374151">' +
+        '<span style="font-weight:500">Add as stop</span><br/><span style="font-size:11px;color:#9ca3af">Create waypoint with name</span></button>';
+      menu.addEventListener('click', (ev) => {
+        const btn = (ev.target as HTMLElement).closest('button');
+        if (!btn || !_clickedLegInfo || !_clickedLngLat) { menu.remove(); return; }
+        const action = btn.dataset.action;
+        if (action === 'route-through') {
+          onRouteViaPointDropRef.current?.(_clickedLngLat, _clickedLegInfo);
+        } else if (action === 'add-stop') {
+          onRouteWaypointDropRef.current?.(_clickedLngLat, _clickedLegInfo);
         }
-      }
+        menu.remove();
+      });
+      document.body.appendChild(menu);
+      document.addEventListener('click', () => removeContextMenu(), { once: true });
     });
 
     // Route line click → show transient OSRM preview (no waypoint created)
