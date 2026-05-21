@@ -81,6 +81,31 @@ export default function PlanningPage() {
   const [flyToBounds, setFlyToBounds] = useState<[number, number][] | null>(null);
   const [dayItinerary, setDayItinerary] = useState<any>(null);
 
+  const fetchDayPlaces = useCallback(async (dayIndex: number): Promise<any[]> => {
+    // Get centroid from itinerary or waypoints
+    const legWps: [number, number][] = [];
+    if (dayItinerary?.days) {
+      const day = dayItinerary.days.find((d: any) => d.day === dayIndex);
+      if (day) {
+        for (const leg of day.legs || []) {
+          const fw = waypoints.find(w => w.id === leg.fromId);
+          if (fw) legWps.push([fw.latitude, fw.longitude]);
+          const tw = waypoints.find(w => w.id === leg.toId);
+          if (tw) legWps.push([tw.latitude, tw.longitude]);
+        }
+      }
+    }
+    // Fallback: if itinerary not loaded yet, use all waypoints
+    if (legWps.length === 0) {
+      waypoints.forEach(w => legWps.push([w.latitude, w.longitude]));
+    }
+    if (legWps.length === 0) return [];
+    const lat = legWps.reduce((s, c) => s + c[0], 0) / legWps.length;
+    const lng = legWps.reduce((s, c) => s + c[1], 0) / legWps.length;
+    const { data } = await api.post(`/trips/${id}/day-places`, { lat, lng, day: dayIndex });
+    return data.places || [];
+  }, [dayItinerary, waypoints, id]);
+
   const handleDayClick = useCallback((dayIndex: number) => {
     setSelectedDay(dayIndex);
     // Zoom map to this day's area
@@ -100,10 +125,9 @@ export default function PlanningPage() {
           if (wp) dayCoords.push([wp.longitude, wp.latitude]);
         }
         if (dayCoords.length >= 2) {
-          // Expand bbox by ~200 miles in each direction
           const lngs = dayCoords.map(c => c[0]);
           const lats = dayCoords.map(c => c[1]);
-          const pad = 3.0; // ~200 miles at mid-latitudes
+          const pad = 3.0;
           const expanded: [number, number][] = [
             [Math.min(...lngs) - pad, Math.min(...lats) - pad],
             [Math.max(...lngs) + pad, Math.max(...lats) + pad],
@@ -114,7 +138,21 @@ export default function PlanningPage() {
     }
     setTab('itinerary');
     setPanelOpen(true);
-  }, [dayItinerary, waypoints]);
+    // On-demand fetch if not cached yet
+    setDayPlacesCache(prev => {
+      if (prev.has(dayIndex)) return prev;
+      setDayPlacesLoading(true);
+      fetchDayPlaces(dayIndex).then(places => {
+        setDayPlacesCache(prev2 => {
+          const next = new Map(prev2);
+          next.set(dayIndex, places);
+          return next;
+        });
+        setDayPlacesLoading(false);
+      });
+      return prev;
+    });
+  }, [dayItinerary, waypoints, fetchDayPlaces]);
 
   // Pre-fetch day places when itinerary data arrives
   const prefetchDayPlaces = useCallback(async (days: any[]) => {
