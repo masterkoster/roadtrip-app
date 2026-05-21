@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import api from '../../api/client';
 import toast from 'react-hot-toast';
 
@@ -54,6 +54,8 @@ interface ItineraryTimelineProps {
   waypoints: Waypoint[];
   onUpdate: () => void;
   onDayClick?: (dayIndex: number) => void;
+  estimateData?: EstimateData | null;
+  estimateLoading?: boolean;
 }
 
 function formatDuration(durationMinutes: number | null): string {
@@ -65,34 +67,9 @@ function formatDuration(durationMinutes: number | null): string {
   return `${days}d ${Math.floor(remaining / 60)}h`;
 }
 
-export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayClick }: ItineraryTimelineProps) {
-  const [data, setData] = useState<EstimateData | null>(null);
-  const [loading, setLoading] = useState(false);
+export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayClick, estimateData, estimateLoading }: ItineraryTimelineProps) {
   const [autoAssigning, setAutoAssigning] = useState(false);
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
-
-  const fetchEstimate = async () => {
-    if (waypoints.length < 2) return;
-    setLoading(true);
-    try {
-      const { data: result } = await api.post(`/trips/${tripId}/estimate-stops`);
-      setData(result);
-    } catch (err: any) {
-      if (err.response?.status !== 400) {
-        console.error('Failed to estimate stops:', err);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (waypoints.length >= 2) {
-      fetchEstimate();
-    } else {
-      setData(null);
-    }
-  }, [tripId, waypoints.length]);
 
   const handleAutoAssignDays = async () => {
     setAutoAssigning(true);
@@ -100,7 +77,6 @@ export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayCl
       const { data: result } = await api.post(`/waypoints/trip/${tripId}/auto-assign-days`);
       toast.success(`Assigned to ${result.dayCount} day(s)`);
       onUpdate();
-      setTimeout(fetchEstimate, 500);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Auto-assign failed');
     } finally {
@@ -108,7 +84,7 @@ export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayCl
     }
   };
 
-  const maxDailyHours = data?.days?.[0] ? 8 : null;
+  const maxDailyHours = estimateData?.days?.[0] ? 8 : null;
 
   if (waypoints.length < 2) {
     return (
@@ -127,7 +103,7 @@ export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayCl
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold text-gray-900">
           Itinerary
-          {data && <span className="text-gray-400 font-normal ml-1">· {data.dayCount} day{data.dayCount > 1 ? 's' : ''}</span>}
+          {estimateData && <span className="text-gray-400 font-normal ml-1">· {estimateData.dayCount} day{estimateData.dayCount > 1 ? 's' : ''}</span>}
         </h2>
         <div className="flex gap-2">
           <button
@@ -138,43 +114,43 @@ export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayCl
             {autoAssigning ? 'Assigning...' : 'Auto-assign days'}
           </button>
           <button
-            onClick={fetchEstimate}
-            disabled={loading}
+            onClick={onUpdate}
+            disabled={estimateLoading}
             className="text-xs px-2.5 py-1.5 bg-roadtrip-600 hover:bg-roadtrip-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
           >
-            {loading ? 'Calculating...' : 'Refresh'}
+            {estimateLoading ? 'Calculating...' : 'Refresh'}
           </button>
         </div>
       </div>
 
-      {loading && !data && (
+      {estimateLoading && !estimateData && (
         <div className="text-center py-8">
           <div className="w-8 h-8 border-3 border-roadtrip-200 border-t-roadtrip-600 rounded-full animate-spin mx-auto mb-2" />
           <p className="text-xs text-gray-400">Calculating route...</p>
         </div>
       )}
 
-      {data && (
+      {estimateData && (
         <>
           {/* Summary bar */}
           <div className="grid grid-cols-3 gap-2 mb-4 p-3 bg-roadtrip-50 rounded-xl">
             <div className="text-center">
               <p className="text-xs text-gray-500">Total Distance</p>
-              <p className="text-sm font-bold text-gray-900">{data.totalDistance.toFixed(1)} km</p>
+              <p className="text-sm font-bold text-gray-900">{estimateData.totalDistance.toFixed(1)} km</p>
             </div>
             <div className="text-center">
               <p className="text-xs text-gray-500">Driving Time</p>
-              <p className="text-sm font-bold text-gray-900">{data.totalDrivingHours.toFixed(1)}h</p>
+              <p className="text-sm font-bold text-gray-900">{estimateData.totalDrivingHours.toFixed(1)}h</p>
             </div>
             <div className="text-center">
               <p className="text-xs text-gray-500">Stops</p>
-              <p className="text-sm font-bold text-gray-900">{data.legCount + 1}</p>
+              <p className="text-sm font-bold text-gray-900">{estimateData.legCount + 1}</p>
             </div>
           </div>
 
           {/* Day timeline */}
           <div className="space-y-3">
-            {data.days.map((day) => {
+            {estimateData.days.map((day) => {
               const isExpanded = expandedDay === day.day;
               const totalTimeWithStops = day.totalDrivingHours + day.stops.reduce((s, st) => s + st.durationMinutes / 60, 0);
               return (

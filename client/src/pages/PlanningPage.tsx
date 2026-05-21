@@ -305,21 +305,29 @@ export default function PlanningPage() {
     return () => { cancelled = true; };
   }, [id, waypoints.length]);
 
-  // POI fetching
+  // POI fetching — uses same day-places Wikipedia endpoint
   const fetchPOIs = async () => {
     if (waypoints.length < 2 && trackPoints.length < 2) { toast.error('Add at least 2 stops first'); return; }
     setPoiLoading(true);
     try {
-      // Use viewport bounds if map is available
-      let params = '';
+      let lat = 0, lng = 0;
       if (mapRef.current) {
-        const b = mapRef.current.getBounds();
-        params = `?south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}`;
+        const c = mapRef.current.getCenter();
+        lat = c.lat; lng = c.lng;
+      } else if (waypoints.length > 0) {
+        lat = waypoints[0].latitude; lng = waypoints[0].longitude;
+      } else { setPoiLoading(false); return; }
+      const { data } = await api.post(`/trips/${id}/day-places`, { lat, lng, radius: 10 });
+      const places = data.places || [];
+      if (places.length > 0) {
+        setPois({ attraction: places });
+        setPoiCategories([{ id: 'attraction', label: 'Nearby Places', icon: '📍', count: places.length }]);
+        setActivePoiCat('attraction');
+      } else {
+        setPois({});
+        setPoiCategories([]);
+        setActivePoiCat(null);
       }
-      const { data } = await api.get(`/poi/${id}${params}`);
-      setPois(data.pois || {});
-      setPoiCategories(data.categories || []);
-      if (data.categories?.length > 0 && !activePoiCat) setActivePoiCat(data.categories[0].id);
     } catch { /* silent */ }
     setPoiLoading(false);
   };
@@ -336,6 +344,10 @@ export default function PlanningPage() {
         description: `${poi.type} (${poi.distanceKm} km from route)`,
       });
       toast.success(`Added "${poi.name}"`);
+      // Fly map to new waypoint
+      if (mapRef.current) {
+        mapRef.current.flyTo({ center: [poi.longitude, poi.latitude], zoom: 10, duration: 1500 });
+      }
       loadTrip();
     } catch { toast.error('Failed to add'); }
     setAddingPoi(null);
@@ -563,6 +575,8 @@ export default function PlanningPage() {
               waypoints={waypoints}
               onUpdate={loadTrip}
               onDayClick={handleDayClick}
+              estimateData={dayItinerary}
+              estimateLoading={routeLoading}
             />
           )}
         </div>
