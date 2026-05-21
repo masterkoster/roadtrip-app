@@ -543,73 +543,67 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
   }
 });
 
-// In-memory cache for day places (key: `${tripId}-${day}`)
+// In-memory cache for day places
 const dayPlacesCache = new Map<string, { data: any; ts: number }>();
 const CACHE_TTL = 3600000; // 1 hour
 
-function getViewbox(lat: number, lng: number, radiusKm: number): string {
-  const degPerKm = 1 / 111;
-  const d = radiusKm * degPerKm;
-  return `${lng - d},${lat + d},${lng + d},${lat - d}`;
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dlat = (lat2 - lat1) * Math.PI / 180;
+  const dlon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dlat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dlon / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
 }
 
-async function fetchNominatimPlaces(lat: number, lng: number, radiusKm: number, searchTerm: string): Promise<any[]> {
-  const viewbox = getViewbox(lat, lng, radiusKm);
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchTerm)}&format=json&limit=20&viewbox=${viewbox}&bounded=1`;
+/** Fetch places from Photon API (Komoot) */
+async function fetchPhotonPlaces(lat: number, lng: number, radiusKm: number, searchTerm: string): Promise<any[]> {
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(searchTerm)}&lat=${lat}&lon=${lng}&limit=30`;
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'roadtrip-app/1.0' },
-      signal: AbortSignal.timeout(6000),
-    });
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
     if (!res.ok) return [];
-    const data = await res.json() as any[];
-    return data.map((el: any) => {
-      const plat = parseFloat(el.lat);
-      const plng = parseFloat(el.lon);
-      if (isNaN(plat) || isNaN(plng)) return null;
-      const dlat = (plat - lat) * Math.PI / 180;
-      const dlng = (plng - lng) * Math.PI / 180;
-      const a = Math.sin(dlat / 2) ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(plat * Math.PI / 180) * Math.sin(dlng / 2) ** 2;
-      const dist = Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
-      return {
-        title: el.display_name?.split(',')[0]?.trim() || searchTerm,
-        description: el.display_name?.split(',').slice(1, 4).join(',').trim() || el.type || '',
-        pageId: el.osm_id || 0,
+    const data = await res.json() as any;
+    const features = data?.features || [];
+    const result: any[] = [];
+    for (const f of features) {
+      const coords = f.geometry?.coordinates;
+      if (!coords || coords.length < 2) continue;
+      const plng = coords[0];
+      const plat = coords[1];
+      const dist = haversine(lat, lng, plat, plng);
+      if (dist > radiusKm) continue;
+      const name = f.properties?.name || f.properties?.osm_value || searchTerm;
+      result.push({
+        title: typeof name === 'string' ? name : String(name),
+        description: f.properties?.street ? (`${f.properties.street}, ${f.properties?.city || ''}`.replace(/,\s*$/, '')) : f.properties?.osm_value || '',
+        pageId: f.properties?.osm_id || 0,
         thumbnail: null,
         latitude: plat,
         longitude: plng,
         distance: dist,
-        source: 'nominatim',
-      };
-    }).filter(Boolean);
+        source: 'photon',
+      });
+    }
+    return result;
   } catch { return []; }
 }
 
-// Get popular places near a location (Nominatim)
+// Get popular places near a location (Photon/Komoot OSM)
 router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { lat, lng, radius, day } = req.body;
     if (lat == null || lng == null) return res.status(400).json({ error: 'lat and lng required' });
     const radiusKm = Math.min(radius || 10, 10);
-    const cacheKey = `${req.params.id}-${day ?? 'main'}-${lat.toFixed(2)}-${lng.toFixed(2)}`;
+    const cacheKey = `${req.params.id}-${day ?? 'main'}-${lat.toFixed(2)}-${lng.toFixed(2)}-ph`;
     const cached = dayPlacesCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       return res.json({ places: cached.data, source: 'cache' });
     }
 
-    // Search multiple attraction-related terms
-    const attractionTerms = ['park', 'museum', 'landmark', 'historic', 'attraction'];
-    const seen = new Set<string>();
-    const allPlaces: any[] = [];
-    for (let ti = 0; ti < attractionTerms.length; ti++) {
-      if (ti > 0) await new Promise(r => setTimeout(r, 500));
-      const results = await fetchNominatimPlaces(lat, lng, radiusKm, attractionTerms[ti]);
-      for (const p of results) {
-        const key = `${p.latitude.toFixed(4)}_${p.longitude.toFixed(4)}`;
-        if (!seen.has(key)) { seen.add(key); allPlaces.push(p); }
-      }
-    }
-    const places = allPlaces;
+    // Search attraction-related terms in parallel (Photon has generous rate limits)
+    const terms = ['park', 'museum', 'historic', 'landmark'];
+    const places = (await Promise.all(terms.map(t => fetchPhotonPlaces(lat, lng, radiusKm, t))))
+      .flat()
+      .filter((p, i, arr) => arr.findIndex(x => Math.abs(x.latitude - p.latitude) < 0.001 && Math.abs(x.longitude - p.longitude) < 0.001) === i);
     places.sort((a: any, b: any) => a.distance - b.distance);
     const top40 = places.slice(0, 40);
 

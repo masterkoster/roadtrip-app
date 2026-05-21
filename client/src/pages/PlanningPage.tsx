@@ -199,6 +199,7 @@ export default function PlanningPage() {
   const [poiLoading, setPoiLoading] = useState(false);
   const [activePoiCat, setActivePoiCat] = useState<string | null>(null);
   const [addingPoi, setAddingPoi] = useState<string | null>(null);
+  const [poiRadius, setPoiRadius] = useState(10); // miles
 
   const loadTrip = useCallback(async () => {
     try {
@@ -361,10 +362,10 @@ export default function PlanningPage() {
     if (waypoints.length < 2 && trackPoints.length < 2) { toast.error('Add at least 2 stops first'); return; }
     setPoiLoading(true);
     try {
-      let params = '';
+      let params = `?radius=${poiRadius}`;
       if (mapRef.current) {
         const b = mapRef.current.getBounds();
-        params = `?south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}`;
+        params += `&south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}`;
       }
       const { data } = await api.get(`/poi/${id}${params}`);
       setPois(data.pois || {});
@@ -376,7 +377,7 @@ export default function PlanningPage() {
 
   useEffect(() => {
     if (tab === 'find' && trackPoints.length >= 2 && poiCategories.length === 0) fetchPOIs();
-  }, [tab, trackPoints?.length]);
+  }, [tab, trackPoints?.length, poiRadius]);
 
   // Delete waypoint
   const handleDeleteWaypoint = useCallback(async (id: number) => {
@@ -528,7 +529,7 @@ export default function PlanningPage() {
       )}
 
       {/* Left panel */}
-      <div className={`absolute top-16 bottom-4 left-4 z-10 w-[340px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[380px]'}`}>
+      <div className={`absolute top-16 bottom-4 left-4 z-10 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-[350ms] flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[420px]'} ${tab === 'find' ? 'w-[400px]' : 'w-[340px]'}`}>
         {/* Tabs */}
         <div className="flex gap-1 p-2 border-b border-gray-100">
           {([
@@ -572,6 +573,24 @@ export default function PlanningPage() {
                 {poiLoading ? 'Searching...' : poiCategories.length > 0 ? 'Refresh' : 'Find Places Along Route'}
               </button>
 
+              {/* Radius slider */}
+              <div className="px-1">
+                <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                  <span>Search radius</span>
+                  <span className="font-semibold text-gray-700">{poiRadius} mi</span>
+                </div>
+                <div className="flex gap-1">
+                  {[5, 10, 25, 50].map(r => (
+                    <button key={r} onClick={() => setPoiRadius(r)}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                        poiRadius === r ? 'bg-roadtrip-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {poiCategories.length > 0 && (
                 <div className="flex gap-1.5 overflow-x-auto pb-1">
                   {poiCategories.map(cat => (
@@ -594,8 +613,8 @@ export default function PlanningPage() {
                 </div>
               ) : activePoiCat && pois[activePoiCat] ? (
                 <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                  {pois[activePoiCat].map((poi: any) => (
-                    <div key={poi.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-gray-50 transition-colors border border-gray-100">
+                  {pois[activePoiCat].map((poi: any, pi: number) => (
+                    <div key={poi.id} className="flex items-start gap-3 p-2.5 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all bg-white animate-[fadeIn_0.3s_ease_both]" style={{ animationDelay: `${pi * 50}ms` }}>
                       {poi.thumbnail ? (
                         <img src={poi.thumbnail} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0 mt-0.5"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -609,10 +628,6 @@ export default function PlanningPage() {
                         {poi.description && <p className="text-[11px] text-gray-500 line-clamp-2 mt-0.5">{poi.description}</p>}
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[10px] text-gray-400">{poi.distanceKm < 1 ? `${(poi.distanceKm * 1000).toFixed(0)}m` : `${poi.distanceKm.toFixed(1)}km`}</span>
-                          {poi.pageId && (
-                            <a href={`https://en.wikipedia.org/?curid=${poi.pageId}`} target="_blank" rel="noopener noreferrer"
-                              className="text-[10px] text-roadtrip-600 hover:underline">Wikipedia ↗</a>
-                          )}
                         </div>
                       </div>
                       <button onClick={() => addPoiAsWaypoint(poi)} disabled={addingPoi === poi.id}

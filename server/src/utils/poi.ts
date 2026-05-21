@@ -89,42 +89,44 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function getViewbox(lat: number, lng: number, radiusKm: number): string {
+function getBbox(lat: number, lng: number, radiusKm: number): string {
   const degPerKm = 1 / 111;
   const d = radiusKm * degPerKm;
-  return `${lng - d},${lat + d},${lng + d},${lat - d}`;
+  return `${lng - d},${lat - d},${lng + d},${lat + d}`;
 }
 
-async function fetchNominatimCategory(
+async function fetchPhotonCategory(
   lat: number, lng: number, radiusKm: number,
   category: string, searchTerm: string
 ): Promise<POI[]> {
-  const viewbox = getViewbox(lat, lng, radiusKm);
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchTerm)}&format=json&limit=20&viewbox=${viewbox}&bounded=1`;
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(searchTerm)}&lat=${lat}&lon=${lng}&limit=30`;
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'roadtrip-app/1.0' },
-      signal: AbortSignal.timeout(6000),
-    });
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
     if (!res.ok) return [];
-    const data = await res.json() as any[];
-    return data.map((el: any) => {
-      const plat = parseFloat(el.lat);
-      const plng = parseFloat(el.lon);
-      if (isNaN(plat) || isNaN(plng)) return null;
+    const data = await res.json() as any;
+    const features = data?.features || [];
+    const result: POI[] = [];
+    for (const f of features) {
+      const coords = f.geometry?.coordinates;
+      if (!coords || coords.length < 2) continue;
+      const plng = coords[0];
+      const plat = coords[1];
       const dist = Math.round(haversineKm(lat, lng, plat, plng) * 100) / 100;
-      return {
-        id: `nom_${el.osm_id || `${el.lat}_${el.lon}`}`,
-        name: el.display_name?.split(',')[0]?.trim() || searchTerm,
+      if (dist > radiusKm) continue;
+      const name = f.properties?.name || f.properties?.osm_value || searchTerm;
+      result.push({
+        id: `photon_${f.properties?.osm_id || f.properties?.osm_type + '_' + f.properties?.osm_id || `${plat}_${plng}`}`,
+        name: typeof name === 'string' ? name : String(name),
         latitude: plat,
         longitude: plng,
         category,
-        type: el.type || 'unknown',
+        type: f.properties?.osm_value || f.properties?.osm_key || 'unknown',
         distanceKm: dist,
-        description: el.display_name?.split(',').slice(1, 4).join(',').trim() || '',
+        description: f.properties?.street ? (`${f.properties.street}, ${f.properties?.city || ''}`.replace(/,\s*$/, '')) : '',
         thumbnail: null,
-      };
-    }).filter(Boolean) as POI[];
+      });
+    }
+    return result;
   } catch {
     return [];
   }
@@ -132,29 +134,29 @@ async function fetchNominatimCategory(
 
 export async function findPOIs(
   routePoints: { latitude: number; longitude: number }[],
-  categories?: POICategory[]
+  categories?: POICategory[],
+  searchRadiusKm?: number
 ): Promise<Record<string, POI[]>> {
   if (routePoints.length === 0) return {};
 
   const cats = categories || ['food', 'fuel', 'lodging', 'attraction'];
+  const searchRadius = searchRadiusKm || 5;
   const centerLat = routePoints.reduce((s, p) => s + p.latitude, 0) / routePoints.length;
   const centerLng = routePoints.reduce((s, p) => s + p.longitude, 0) / routePoints.length;
   const result: Record<string, POI[]> = {};
 
-  // Run all category searches in parallel with staggered starts to avoid rate limiting
-  const results = await Promise.all(cats.map(async (cat, i) => {
+  // Run categories in parallel (Photon has generous rate limits)
+  const results = await Promise.all(cats.map(async (cat) => {
     const searchTerm = CATEGORY_SEARCH_TERMS[cat];
     if (!searchTerm) return { cat, items: [] as POI[] };
-    // Stagger starts: 400ms between each to stay under 1 req/s
-    if (i > 0) await new Promise(r => setTimeout(r, 400 * i));
-    const items = await fetchNominatimCategory(centerLat, centerLng, 5, cat, searchTerm);
+    const items = await fetchPhotonCategory(centerLat, centerLng, searchRadius, cat, searchTerm);
     return { cat, items };
   }));
 
   for (const { cat, items } of results) {
     if (items.length > 0) {
       items.sort((a, b) => a.distanceKm - b.distanceKm);
-      result[cat] = items.slice(0, 15);
+      result[cat] = items.slice(0, 20);
     }
   }
 

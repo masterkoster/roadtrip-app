@@ -66,7 +66,10 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
       ? (categoriesParam.split(',').filter(c => ALL_CATEGORIES.includes(c as POICategory)) as POICategory[])
       : undefined;
 
-    const pois = await findPOIs(routePoints, categories);
+    const radiusMi = parseFloat(req.query.radius as string);
+    const searchRadiusKm = !isNaN(radiusMi) && radiusMi > 0 ? Math.round(radiusMi * 1.609) : 5;
+
+    const pois = await findPOIs(routePoints, categories, searchRadiusKm);
 
     const categoryMeta = Object.keys(pois).map(cat => ({
       id: cat,
