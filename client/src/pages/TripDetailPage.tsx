@@ -162,7 +162,7 @@ export default function TripDetailPage() {
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
                 </button>
                 <div className="absolute right-0 top-full mt-1 w-36 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-gray-100 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10">
-                  <Link to={`/trips/${id}/edit`} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Edit trip</Link>
+                  <Link to={`/trips/${id}/plan`} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Edit trip</Link>
                   <button onClick={deleteTrip} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">Delete</button>
                 </div>
               </div>
