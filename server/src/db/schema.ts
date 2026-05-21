@@ -88,6 +88,25 @@ export const guides = sqliteTable('guides', {
   tripIdIdx: index('guides_trip_id_idx').on(table.tripId),
 }));
 
+export const tripParticipants = sqliteTable('trip_participants', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  tripId: integer('trip_id').notNull().references(() => trips.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  vehicleType: text('vehicle_type').notNull().default('car'),
+  colorHex: text('color_hex').notNull().default('#f97316'),
+  createdAt: text('created_at').notNull().$default(() => new Date().toISOString()),
+}, (table) => ({
+  tripParticipantTripIdx: index('trip_participants_trip_id_idx').on(table.tripId),
+}));
+
+export const storySettings = sqliteTable('story_settings', {
+  tripId: integer('trip_id').primaryKey().references(() => trips.id, { onDelete: 'cascade' }),
+  defaultMode: text('default_mode').notNull().default('storybook'),
+  highlightWaypointIds: text('highlight_waypoint_ids'),
+  soundtrackUrl: text('soundtrack_url'),
+  updatedAt: text('updated_at').notNull().$default(() => new Date().toISOString()),
+});
+
 export const guideSegments = sqliteTable('guide_segments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   guideId: integer('guide_id').notNull().references(() => guides.id, { onDelete: 'cascade' }),

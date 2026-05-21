@@ -52,9 +52,23 @@ export default function TripDetailPage() {
   const [mapLoaded, setMapLoaded] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
 
-  const [storyData, setStoryData] = useState<{ guide: Guide; segments: StorySegment[]; waypoints: Waypoint[] } | null>(null);
+  const [storyData, setStoryData] = useState<{
+    guide: Guide;
+    segments: StorySegment[];
+    waypoints: Waypoint[];
+    photos: Photo[];
+    trackPoints: TrackPoint[];
+    trip: any;
+    participants?: Array<{ id: number; name: string; vehicleType: string; colorHex: string }>;
+    settings?: {
+      defaultMode?: 'storybook' | 'animated';
+      highlights?: Array<{ waypointId: number }>;
+      soundtrackUrl?: string | null;
+    };
+  } | null>(null);
   const [showingStory, setShowingStory] = useState(false);
   const [loadingStory, setLoadingStory] = useState(false);
+  const [storyMode, setStoryMode] = useState<'storybook' | 'animated'>('storybook');
 
   useEffect(() => {
     api.get(`/trips/${id}`).then(({ data }) => {
@@ -89,6 +103,7 @@ export default function TripDetailPage() {
     try {
       const { data } = await api.get(`/stories/${id}`);
       setStoryData(data);
+      setStoryMode((data.settings?.defaultMode as 'storybook' | 'animated') || 'storybook');
       setShowingStory(true);
     } catch (err: any) {
       if (err.response?.status === 404) toast.error('No guide found for this trip');
@@ -96,6 +111,20 @@ export default function TripDetailPage() {
     }
     setLoadingStory(false);
   };
+
+  const storyParticipants = useMemo(() => {
+    if (!storyData) return [{ id: 0, name: 'Traveler', vehicleType: trip?.vehicle || 'car', colorHex: '#f97316' }];
+    if (storyData.participants && storyData.participants.length > 0) return storyData.participants;
+    return [{ id: 0, name: 'Traveler', vehicleType: trip?.vehicle || 'car', colorHex: '#f97316' }];
+  }, [storyData, trip?.vehicle]);
+
+  const storyHighlights = useMemo(() => {
+    if (!storyData) return [] as Array<{ waypointId: number }>;
+    return (storyData.settings?.highlights || [])
+      .filter((h: { waypointId: number }) => storyData.waypoints.some(w => w.id === h.waypointId));
+  }, [storyData]);
+
+  const storySoundtrack = storyData?.settings?.soundtrackUrl || undefined;
 
   if (loading) return (
     <div className="flex items-center justify-center py-24">
@@ -316,15 +345,35 @@ export default function TripDetailPage() {
 
       {/* Story Player Overlay */}
       {showingStory && storyData && (
-        <StoryPlayer
-          tripId={Number(id)}
-          segments={storyData.segments}
-          waypoints={storyData.waypoints}
-          photos={photos}
-          trackPoints={trackPoints}
-          vehicle={(trip?.vehicle as any) || 'car'}
-          onClose={() => setShowingStory(false)}
-        />
+        <>
+          <div className="absolute top-6 right-6 z-[60] flex items-center gap-2 bg-black/40 text-white px-3 py-1.5 rounded-xl text-xs uppercase tracking-[0.2em]">
+            <span className="text-white/60">View</span>
+            <button
+              className={`px-2 py-1 rounded-lg transition-colors ${storyMode === 'storybook' ? 'bg-amber-500 text-white' : 'text-white/70 hover:text-white'}`}
+              onClick={() => setStoryMode('storybook')}
+            >Storybook</button>
+            <button
+              className={`px-2 py-1 rounded-lg transition-colors ${storyMode === 'animated' ? 'bg-amber-500 text-white' : 'text-white/70 hover:text-white'}`}
+              onClick={() => setStoryMode('animated')}
+            >Animated</button>
+          </div>
+          <StoryPlayer
+            mode={storyMode}
+            tripId={Number(id)}
+            segments={storyData.segments}
+            waypoints={storyData.waypoints}
+            photos={storyData.photos}
+            trackPoints={storyData.trackPoints}
+            vehicle={(trip?.vehicle as any) || 'car'}
+            trip={storyData.trip}
+            guideId={storyData.guide.id}
+            allowShare
+            participants={storyParticipants}
+            highlights={storyHighlights}
+            soundtrackUrl={storySoundtrack}
+            onClose={() => setShowingStory(false)}
+          />
+        </>
       )}
     </div>
   );

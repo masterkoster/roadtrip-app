@@ -1,6 +1,5 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
-import { getLandmarkSticker } from '../../utils/landmarkStickers';
 
 const MAP_STYLES = {
   colorful: 'https://tiles.openfreemap.org/styles/liberty',
@@ -286,18 +285,32 @@ export default function TripMap({
       outer.style.cssText = 'position:relative;width:56px;height:56px;cursor:pointer';
 
       const inner = document.createElement('div');
-      inner.style.cssText = 'position:absolute;inset:-2px;border:3px solid white;border-radius:50%;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.5),0 0 0 2px rgba(124,58,237,0.3);transition:transform .15s;display:flex;align-items:center;justify-content:center';
+      inner.style.cssText = 'position:absolute;inset:0;border-radius:50%;overflow:hidden;box-shadow:0 3px 15px rgba(0,0,0,0.4);transition:transform .15s';
       inner.title = lm.name;
 
-      const svgDataUri = 'data:image/svg+xml,' + encodeURIComponent(getLandmarkSticker(lm.id));
-      inner.style.backgroundImage = `url('${svgDataUri}')`;
-      inner.style.backgroundSize = 'cover';
-      inner.style.backgroundPosition = 'center';
+      if (lm.thumbnail) {
+        inner.style.backgroundImage = `url("${lm.thumbnail.replace(/"/g, '%22')}")`;
+        inner.style.backgroundSize = 'cover';
+        inner.style.backgroundPosition = 'center';
+      } else {
+        inner.style.background = 'linear-gradient(135deg,#7c3aed,#4f46e5)';
+        inner.textContent = '🏛️';
+        inner.style.display = 'flex';
+        inner.style.alignItems = 'center';
+        inner.style.justifyContent = 'center';
+        inner.style.fontSize = '24px';
+      }
 
-      inner.addEventListener('mouseenter', () => { inner.style.transform = 'scale(1.15)'; });
+      // Sticker-style white border ring
+      const ring = document.createElement('div');
+      ring.style.cssText = 'position:absolute;inset:-3px;border-radius:50%;border:3px solid white;pointer-events:none;box-shadow:0 0 0 1.5px rgba(124,58,237,0.25)';
+
+      inner.addEventListener('mouseenter', () => { inner.style.transform = 'scale(1.12)'; });
       inner.addEventListener('mouseleave', () => { inner.style.transform = 'scale(1)'; });
       inner.addEventListener('click', () => { onLandmarkClickRef.current?.(lm); });
+
       outer.appendChild(inner);
+      outer.appendChild(ring);
       el.appendChild(outer);
       const mk = new maplibregl.Marker({ element: el })
         .setLngLat([lm.longitude, lm.latitude])
@@ -346,5 +359,4 @@ function findClickedLeg(lngLat: { lat: number; lng: number }, legGeometries: { f
   }
   return best;
 }
-
 

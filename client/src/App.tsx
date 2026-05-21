@@ -12,6 +12,7 @@ import EditTripPage from './pages/EditTripPage';
 import GuideViewPage from './pages/GuideViewPage';
 import NewGuidePage from './pages/NewGuidePage';
 import PhotosPage from './pages/PhotosPage';
+import StorySharePage from './pages/StorySharePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -34,6 +35,7 @@ export default function App() {
         <Route path=":id/guides/new" element={<NewGuidePage />} />
       </Route>
       <Route path="/trips/:id/plan" element={<ProtectedRoute><PlanningPage /></ProtectedRoute>} />
+      <Route path="/story/:token" element={<StorySharePage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

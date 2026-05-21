@@ -406,16 +406,26 @@ export default function PlanningPage() {
   }, []);
 
   // Fetch nearby hotels when a landmark is selected
-  const [nearbyHotels, setNearbyHotels] = useState<any[]>([]);
-  const [hotelsLoading, setHotelsLoading] = useState(false);
+  const [nearbyItems, setNearbyItems] = useState<any[]>([]);
+  const [nearbyType, setNearbyType] = useState<string>('hotel');
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [searchRadius, setSearchRadius] = useState(10);
+
+  const fetchNearby = useCallback(async (lm: any, type: string, radius: number) => {
+    if (!lm) { setNearbyItems([]); return; }
+    setItemsLoading(true);
+    setNearbyType(type);
+    try {
+      const { data } = await api.get(`/poi/nearby?lat=${lm.latitude}&lng=${lm.longitude}&radiusKm=${radius}&type=${type}`);
+      setNearbyItems(data?.items || []);
+    } catch {
+      setNearbyItems([]);
+    }
+    setItemsLoading(false);
+  }, []);
 
   useEffect(() => {
-    if (!selectedLandmark) { setNearbyHotels([]); return; }
-    setHotelsLoading(true);
-    api.get(`/poi/nearby?lat=${selectedLandmark.latitude}&lng=${selectedLandmark.longitude}&radiusKm=20`)
-      .then(r => setNearbyHotels(r.data?.hotels || []))
-      .catch(() => setNearbyHotels([]))
-      .finally(() => setHotelsLoading(false));
+    if (selectedLandmark) fetchNearby(selectedLandmark, nearbyType, searchRadius);
   }, [selectedLandmark]);
 
   // Add landmark as waypoint (from panel)
@@ -593,122 +603,165 @@ export default function PlanningPage() {
 
       {/* Right panel — landmark detail */}
       {selectedLandmark && (
-        <div className="absolute top-16 bottom-4 right-4 z-10 w-[360px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col overflow-hidden animate-[fadeIn_0.2s_ease_both]">
+        <div className="absolute top-16 bottom-4 right-4 z-10 w-[580px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col overflow-hidden animate-[fadeIn_0.2s_ease_both]">
           {/* Image header */}
           {selectedLandmark.thumbnail ? (
-            <div className="relative h-48 shrink-0 bg-gray-100">
+            <div className="relative h-52 shrink-0 bg-gray-100">
               <img src={selectedLandmark.thumbnail} alt={selectedLandmark.name}
                 className="w-full h-full object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
               <button onClick={() => setSelectedLandmark(null)}
-                className="absolute top-3 right-3 p-1.5 bg-black/30 hover:bg-black/50 text-white rounded-lg transition-colors backdrop-blur-sm">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                className="absolute top-3 right-3 p-2 bg-black/30 hover:bg-black/50 text-white rounded-xl transition-colors backdrop-blur-sm">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
           ) : (
-            <div className="h-36 bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center relative">
-              <span className="text-5xl">🏛️</span>
+            <div className="h-40 bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center relative shrink-0">
+              <span className="text-6xl">🏛️</span>
               <button onClick={() => setSelectedLandmark(null)}
-                className="absolute top-3 right-3 p-1.5 bg-black/20 hover:bg-black/40 text-white rounded-lg transition-colors backdrop-blur-sm">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                className="absolute top-3 right-3 p-2 bg-black/20 hover:bg-black/40 text-white rounded-xl transition-colors backdrop-blur-sm">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
           )}
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            <h2 className="text-lg font-bold text-gray-900">{selectedLandmark.name}</h2>
-
+          {/* Content area (scrollable) */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            {/* Name + description */}
+            <h2 className="text-xl font-bold text-gray-900">{selectedLandmark.name}</h2>
             {selectedLandmark.extract ? (
-              <p className="text-sm text-gray-600 leading-relaxed">{selectedLandmark.extract}</p>
+              <p className="text-base text-gray-600 leading-relaxed">{selectedLandmark.extract}</p>
             ) : (
-              <p className="text-sm text-gray-600 leading-relaxed">{selectedLandmark.description}</p>
+              <p className="text-base text-gray-600 leading-relaxed">{selectedLandmark.description}</p>
             )}
 
-            {/* Links */}
+            {/* Links row */}
             <div className="flex flex-wrap gap-2">
               {selectedLandmark.website && (
                 <a href={selectedLandmark.website} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-roadtrip-600 hover:text-roadtrip-800 bg-roadtrip-50 px-3 py-1.5 rounded-lg hover:bg-roadtrip-100 transition-colors">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m0 0c1.657 0 3 4.03 3 9s-1.343 9-3 9z" /></svg>
-                  Official Website
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-roadtrip-600 bg-roadtrip-50 px-4 py-2 rounded-xl hover:bg-roadtrip-100 transition-colors">
+                  Official Website ↗
                 </a>
               )}
               {selectedLandmark.wikiUrl && (
                 <a href={selectedLandmark.wikiUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 bg-gray-100 px-3 py-1.5 rounded-lg hover:bg-gray-200 transition-colors">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                  Wikipedia
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 bg-gray-100 px-4 py-2 rounded-xl hover:bg-gray-200 transition-colors">
+                  Wikipedia ↗
                 </a>
               )}
             </div>
 
             {/* Ticket info */}
             {selectedLandmark.ticketInfo && (
-              <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 mb-1">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" /></svg>
-                  Tickets & Pricing
-                </div>
-                <p className="text-xs text-amber-700 leading-relaxed">{selectedLandmark.ticketInfo}</p>
+              <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-4">
+                <p className="text-sm font-semibold text-amber-800 mb-1">Tickets & Pricing</p>
+                <p className="text-sm text-amber-700 leading-relaxed">{selectedLandmark.ticketInfo}</p>
               </div>
             )}
 
-            {/* Coordinates */}
-            <div className="flex items-center gap-2 text-xs text-gray-400">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
               <span>{selectedLandmark.latitude.toFixed(4)}, {selectedLandmark.longitude.toFixed(4)}</span>
             </div>
 
-            {/* Nearby hotels */}
+            {/* Category tabs + nearby results */}
             <div>
-              <h4 className="text-sm font-semibold text-gray-900 mb-2">Nearby Accommodation</h4>
-              {hotelsLoading ? (
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <div className="w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex gap-1.5">
+                  {[
+                    { id: 'hotel', label: 'Hotels', icon: '🏨' },
+                    { id: 'restaurant', label: 'Restaurants', icon: '🍽️' },
+                    { id: 'attraction', label: 'Attractions', icon: '🎯' },
+                    { id: 'camping', label: 'Camping', icon: '🏕️' },
+                  ].map(t => (
+                    <button key={t.id} onClick={() => fetchNearby(selectedLandmark, t.id, searchRadius)}
+                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                        nearbyType === t.id ? 'bg-roadtrip-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}>
+                      {t.icon} {t.label}
+                    </button>
+                  ))}
+                </div>
+                <select value={searchRadius} onChange={e => { const r = Number(e.target.value); setSearchRadius(r); fetchNearby(selectedLandmark, nearbyType, r); }}
+                  className="text-sm bg-gray-100 border-0 rounded-xl px-3 py-2 text-gray-600 focus:ring-0 cursor-pointer">
+                  <option value={5}>5 km</option>
+                  <option value={10}>10 km</option>
+                  <option value={25}>25 km</option>
+                  <option value={50}>50 km</option>
+                </select>
+              </div>
+
+              {/* Results */}
+              {itemsLoading ? (
+                <div className="flex items-center gap-3 py-5 text-sm text-gray-400">
+                  <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
                   Searching...
                 </div>
-              ) : nearbyHotels.length > 0 ? (
-                <div className="space-y-1.5">
-                  {nearbyHotels.map((h, i) => (
-                    <div key={`${h.lat}-${h.lng}`} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-gray-800 truncate">{h.name}</p>
-                        <p className="text-[10px] text-gray-400">{h.distance < 1 ? `${(h.distance * 1000).toFixed(0)}m` : `${h.distance.toFixed(1)}km`}</p>
+              ) : nearbyItems.length > 0 ? (
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                  {nearbyItems.map((item: any, i: number) => (
+                    <div key={`${item.lat}-${item.lng}`}
+                      className="flex items-start gap-4 p-4 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all bg-white animate-[fadeIn_0.3s_ease_both]" style={{ animationDelay: `${i * 30}ms` }}>
+                      {/* Photo or icon */}
+                      <div className="w-20 h-20 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 overflow-hidden">
+                        {item.photo ? (
+                          <img src={item.photo} alt="" className="w-full h-full object-cover" />
+                        ) : item.categoryIcon ? (
+                          <img src={item.categoryIcon} alt="" className="w-10 h-10" />
+                        ) : (
+                          <span className="text-2xl">{nearbyType === 'hotel' ? '🏨' : nearbyType === 'restaurant' ? '🍽️' : nearbyType === 'attraction' ? '🎯' : '🏕️'}</span>
+                        )}
                       </div>
-                      <button
-                        onClick={async () => {
-                          try {
-                            await api.post(`/waypoints/trip/${id}`, {
-                              name: h.name.substring(0, 100),
-                              latitude: h.lat, longitude: h.lng,
-                              description: `Accommodation near ${selectedLandmark.name}`,
-                            });
-                            toast.success(`Added "${h.name}"`);
-                            loadTrip();
-                          } catch { toast.error('Failed to add'); }
-                        }}
-                        className="shrink-0 ml-2 px-2 py-1 text-[10px] font-medium rounded-lg bg-roadtrip-600 text-white hover:bg-roadtrip-700 transition-colors">
-                        + Add
-                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-base font-semibold text-gray-900 truncate">{item.name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-sm text-gray-400">{item.distance < 1 ? `${(item.distance * 1000).toFixed(0)}m` : `${item.distance.toFixed(1)}km`}</span>
+                          {item.price && <span className="text-sm text-green-600 font-semibold">{'$'.repeat(item.price)}</span>}
+                          {item.rating && <span className="text-sm text-amber-500">★ {item.rating.toFixed(1)}</span>}
+                        </div>
+                        {item.address && <p className="text-xs text-gray-400 truncate mt-1">{item.address}</p>}
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.post(`/waypoints/trip/${id}`, {
+                                  name: item.name.substring(0, 100),
+                                  latitude: item.lat, longitude: item.lng,
+                                  description: item.address ? `${item.address} — ${item.type} near ${selectedLandmark.name}` : `${item.type} near ${selectedLandmark.name}`,
+                                });
+                                toast.success(`Added "${item.name}"`);
+                                loadTrip();
+                              } catch { toast.error('Failed to add'); }
+                            }}
+                            className="px-3 py-1.5 text-xs font-medium rounded-xl bg-roadtrip-600 text-white hover:bg-roadtrip-700 transition-colors">
+                            + Add
+                          </button>
+                          {item.website && (
+                            <a href={item.website} target="_blank" rel="noopener noreferrer"
+                              className="px-3 py-1.5 text-xs font-medium rounded-xl bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors inline-flex items-center gap-1">
+                              Web ↗
+                            </a>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-gray-400 italic">No nearby hotels found</p>
+                <p className="text-sm text-gray-400 italic py-3">No {nearbyType}s found nearby. Try a larger radius.</p>
               )}
             </div>
           </div>
 
           {/* Actions */}
-          <div className="p-3 border-t border-gray-100 flex gap-2">
+          <div className="p-4 border-t border-gray-100 flex gap-3">
             <button onClick={addLandmarkAsWaypoint}
-              className="flex-1 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl text-sm font-semibold hover:from-violet-700 hover:to-indigo-700 transition-all shadow-sm">
-              + Add as waypoint
+              className="flex-1 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl text-base font-semibold hover:from-violet-700 hover:to-indigo-700 transition-all shadow-sm">
+              + Add {selectedLandmark.name} to trip
             </button>
             <button onClick={() => { setSelectedLandmark(null); }}
-              className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition-all">
+              className="px-6 py-3 bg-gray-100 text-gray-600 rounded-xl text-base font-medium hover:bg-gray-200 transition-all">
               Close
             </button>
           </div>
@@ -716,20 +769,20 @@ export default function PlanningPage() {
       )}
 
       {/* Left panel */}
-      <div className={`absolute top-16 bottom-4 left-4 z-10 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-[350ms] flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[420px]'} ${tab === 'find' ? 'w-[400px]' : 'w-[340px]'}`}>
+      <div className={`absolute top-16 bottom-4 left-4 z-10 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-[350ms] flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[580px]'} ${tab === 'find' ? 'w-[540px]' : 'w-[460px]'}`}>
         {/* Tabs */}
-        <div className="flex gap-1 p-2 border-b border-gray-100">
+        <div className="flex gap-1.5 p-3 border-b border-gray-100">
           {([
             { id: 'stops' as Tab, label: 'Stops', icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z' },
             { id: 'find' as Tab, label: 'Find', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
             { id: 'itinerary' as Tab, label: 'Itinerary', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
           ]).map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-medium rounded-xl transition-all ${
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-base font-medium rounded-xl transition-all ${
                 tab === t.id ? 'bg-roadtrip-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
               }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={t.icon} />
               </svg>
               {t.label}
@@ -738,7 +791,7 @@ export default function PlanningPage() {
         </div>
 
         {/* Panel content */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {/* ============ STOPS TAB ============ */}
           {tab === 'stops' && (
             <WaypointPanel
@@ -756,20 +809,20 @@ export default function PlanningPage() {
           {tab === 'find' && (
             <>
               <button onClick={fetchPOIs} disabled={poiLoading}
-                className="w-full py-2.5 bg-roadtrip-600 text-white rounded-xl text-sm font-medium hover:bg-roadtrip-700 transition-colors disabled:opacity-50">
+                className="w-full py-3 bg-roadtrip-600 text-white rounded-xl text-base font-medium hover:bg-roadtrip-700 transition-colors disabled:opacity-50">
                 {poiLoading ? 'Searching...' : poiCategories.length > 0 ? 'Refresh' : 'Find Places Along Route'}
               </button>
 
               {/* Radius slider */}
               <div className="px-1">
-                <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                <div className="flex items-center justify-between text-sm text-gray-500 mb-1.5">
                   <span>Search radius</span>
                   <span className="font-semibold text-gray-700">{poiRadius} mi</span>
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-1.5">
                   {[5, 10, 25, 50].map(r => (
                     <button key={r} onClick={() => setPoiRadius(r)}
-                      className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
                         poiRadius === r ? 'bg-roadtrip-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}>
                       {r}
@@ -779,61 +832,61 @@ export default function PlanningPage() {
               </div>
 
               {poiCategories.length > 0 && (
-                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                <div className="flex gap-2 overflow-x-auto pb-1">
                   {poiCategories.map(cat => (
                     <button key={cat.id} onClick={() => setActivePoiCat(cat.id)}
-                      className={`shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      className={`shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
                         activePoiCat === cat.id ? 'bg-roadtrip-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}>
-                      <span>{CAT_ICONS[cat.id] || '📍'}</span>
+                      <span className="text-lg">{CAT_ICONS[cat.id] || '📍'}</span>
                       <span>{cat.label}</span>
-                      <span className={`text-[10px] ${activePoiCat === cat.id ? 'text-white/70' : 'text-gray-400'}`}>{cat.count}</span>
+                      <span className={`text-xs ${activePoiCat === cat.id ? 'text-white/70' : 'text-gray-400'}`}>{cat.count}</span>
                     </button>
                   ))}
                 </div>
               )}
 
               {poiLoading ? (
-                <div className="text-center py-6">
-                  <div className="w-6 h-6 border-2 border-roadtrip-200 border-t-roadtrip-600 rounded-full animate-spin mx-auto" />
-                  <p className="text-xs text-gray-400 mt-2">Searching nearby places...</p>
+                <div className="text-center py-8">
+                  <div className="w-8 h-8 border-2 border-roadtrip-200 border-t-roadtrip-600 rounded-full animate-spin mx-auto" />
+                  <p className="text-sm text-gray-400 mt-3">Searching nearby places...</p>
                 </div>
               ) : activePoiCat && pois[activePoiCat] ? (
-                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                <div className="space-y-2.5 max-h-[500px] overflow-y-auto">
                   {pois[activePoiCat].map((poi: any, pi: number) => (
-                    <div key={poi.id} className="flex items-start gap-3 p-2.5 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all bg-white animate-[fadeIn_0.3s_ease_both]" style={{ animationDelay: `${pi * 50}ms` }}>
+                    <div key={poi.id} className="flex items-start gap-4 p-3.5 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all bg-white animate-[fadeIn_0.3s_ease_both]" style={{ animationDelay: `${pi * 50}ms` }}>
                       {poi.thumbnail ? (
-                        <img src={poi.thumbnail} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0 mt-0.5"
+                        <img src={poi.thumbnail} alt="" className="w-20 h-20 rounded-xl object-cover shrink-0"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                       ) : (
-                        <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center text-lg shrink-0 mt-0.5">
+                        <div className="w-20 h-20 rounded-xl bg-gray-100 flex items-center justify-center text-2xl shrink-0">
                           {CAT_ICONS[poi.category] || '📍'}
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900 truncate">{poi.name}</p>
-                        {poi.description && <p className="text-[11px] text-gray-500 line-clamp-2 mt-0.5">{poi.description}</p>}
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] text-gray-400">{poi.distanceKm < 1 ? `${(poi.distanceKm * 1000).toFixed(0)}m` : `${poi.distanceKm.toFixed(1)}km`}</span>
+                        <p className="text-base font-semibold text-gray-900 truncate">{poi.name}</p>
+                        {poi.description && <p className="text-sm text-gray-500 line-clamp-2 mt-1">{poi.description}</p>}
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className="text-xs text-gray-400">{poi.distanceKm < 1 ? `${(poi.distanceKm * 1000).toFixed(0)}m` : `${poi.distanceKm.toFixed(1)}km`}</span>
                         </div>
                       </div>
                       <button onClick={() => addPoiAsWaypoint(poi)} disabled={addingPoi === poi.id}
-                        className="shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-roadtrip-600 text-white hover:bg-roadtrip-700 transition-colors disabled:opacity-50">
+                        className="shrink-0 px-3.5 py-2 text-xs font-semibold rounded-xl bg-roadtrip-600 text-white hover:bg-roadtrip-700 transition-colors disabled:opacity-50">
                         {addingPoi === poi.id ? '...' : '+ Add'}
                       </button>
                     </div>
                   ))}
                 </div>
               ) : trackPoints.length < 2 ? (
-                <div className="text-center py-6 text-gray-400">
-                  <svg className="w-8 h-8 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                  <p className="text-sm">Upload a GPX file or add track points to discover places</p>
+                <div className="text-center py-8 text-gray-400">
+                  <svg className="w-12 h-12 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <p className="text-base">Upload a GPX file or add track points to discover places</p>
                 </div>
               ) : (
-                <div className="text-center py-6 text-gray-400">
-                  <svg className="w-8 h-8 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                  <p className="text-sm">Click "Find Places" to discover</p>
-                  <p className="text-xs mt-1">restaurants, fuel, lodging & more along your route</p>
+                <div className="text-center py-8 text-gray-400">
+                  <svg className="w-12 h-12 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  <p className="text-base">Click "Find Places" to discover</p>
+                  <p className="text-sm mt-1">restaurants, fuel, lodging & more along your route</p>
                 </div>
               )}
             </>
@@ -854,9 +907,9 @@ export default function PlanningPage() {
 
         {/* Cost summary bar at bottom */}
         {costData && (costData.fuelCost.total > 0 || costData.accommodationCost.total > 0) && (
-          <div className="p-3 border-t border-gray-100 bg-gradient-to-r from-roadtrip-50 to-amber-50">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-3">
+          <div className="p-4 border-t border-gray-100 bg-gradient-to-r from-roadtrip-50 to-amber-50">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-4">
                 <span className="text-gray-500">
                   ⛽ Fuel: <strong className="text-gray-800">${costData.fuelCost.total.toFixed(2)}</strong>
                 </span>
