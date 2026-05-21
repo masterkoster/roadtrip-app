@@ -103,6 +103,8 @@ export default function TripDetailPage() {
   const [isSnapping, setIsSnapping] = useState(false);
   const [rightTab, setRightTab] = useState<'stops' | 'itinerary'>('stops');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pendingMapLat, setPendingMapLat] = useState<number | null>(null);
+  const [pendingMapLng, setPendingMapLng] = useState<number | null>(null);
 
   const triggerRefresh = useCallback(() => {
     setRefreshKey(k => k + 1);
@@ -114,6 +116,13 @@ export default function TripDetailPage() {
       setGuides(data.guides || []);
     }).catch(console.error);
   }, [id]);
+
+  const handleMapClick = useCallback((lngLat: { lat: number; lng: number }) => {
+    setPendingMapLat(lngLat.lat);
+    setPendingMapLng(lngLat.lng);
+    setRightTab('stops');
+    toast.success('Location selected — name your stop below');
+  }, []);
 
   const handleSnapToRoads = async () => {
     if (trackPoints.length < 2) { toast.error('Need at least 2 track points'); return; }
@@ -270,6 +279,7 @@ export default function TripDetailPage() {
               photos={photos}
               animated={!isTracking}
               onMapLoaded={() => setMapLoaded(true)}
+              onMapClick={handleMapClick}
               mapStyle={mapStyle}
             />
           </div>
@@ -326,7 +336,14 @@ export default function TripDetailPage() {
 
             {rightTab === 'stops' ? (
               <>
-                <WaypointPanel waypoints={waypoints} tripId={Number(id)} onUpdate={triggerRefresh} />
+                <WaypointPanel
+                  waypoints={waypoints}
+                  tripId={Number(id)}
+                  onUpdate={triggerRefresh}
+                  pendingLat={pendingMapLat}
+                  pendingLng={pendingMapLng}
+                  onPendingCleared={() => { setPendingMapLat(null); setPendingMapLng(null); }}
+                />
 
                 <POISuggestions tripId={Number(id)} trackPoints={trackPoints} onWaypointAdded={triggerRefresh} />
 

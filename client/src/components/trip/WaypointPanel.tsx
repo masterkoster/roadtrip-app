@@ -25,6 +25,9 @@ interface WaypointPanelProps {
   tripId: number;
   onUpdate: () => void;
   legStats?: LegStat[];
+  pendingLat?: number | null;
+  pendingLng?: number | null;
+  onPendingCleared?: () => void;
 }
 
 type DurationUnit = 'minutes' | 'hours' | 'days';
@@ -51,7 +54,7 @@ function convertFromMinutes(minutes: number, unit: DurationUnit): number {
 
 const STORAGE_KEY = 'roadtrip_drag_mode';
 
-export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats }: WaypointPanelProps) {
+export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats, pendingLat, pendingLng, onPendingCleared }: WaypointPanelProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -72,6 +75,15 @@ export default function WaypointPanel({ waypoints, tripId, onUpdate, legStats }:
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(useDragReorder));
   }, [useDragReorder]);
+
+  useEffect(() => {
+    if (pendingLat != null && pendingLng != null) {
+      setAddingWaypoint(true);
+      setNewLat(String(pendingLat));
+      setNewLng(String(pendingLng));
+      onPendingCleared?.();
+    }
+  }, [pendingLat, pendingLng]);
 
   const maxDay = Math.max(-1, ...waypoints.map(w => w.dayIndex ?? -1));
   const dayOptions = Array.from({ length: maxDay + 1 }, (_, i) => i);
