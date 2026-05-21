@@ -118,7 +118,8 @@ export default function TripMap({
       }
     });
 
-    // Route line click → drag-to-insert
+    // Route line click → show transient OSRM preview (no waypoint created)
+    let _previewTimer: ReturnType<typeof setTimeout> | null = null;
     m.on('click', (e) => {
       const lg = legGeometriesRef.current;
       if (lg && lg.length > 0 && m) {
@@ -126,30 +127,36 @@ export default function TripMap({
         if (features.length > 0) {
           const clicked = findClickedLeg(e.lngLat, lg, waypointsRef.current);
           if (clicked) {
-            const el = document.createElement('div');
-            el.innerHTML = `<div style="width:32px;height:32px;background:#00b4ff;border:3px solid white;border-radius:50%;box-shadow:0 2px 16px rgba(0,180,255,0.6);display:flex;align-items:center;justify-content:center;cursor:grab;animation:pulse 1.5s infinite;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M12 4v16m8-8H4"/></svg>
-            </div>
-            <style>@keyframes pulse { 0%,100% { box-shadow: 0 2px 16px rgba(0,180,255,0.6); } 50% { box-shadow: 0 2px 24px rgba(0,180,255,1); } }</style>`;
-            const marker = new maplibregl.Marker({ element: el.firstChild as HTMLElement, draggable: true })
-              .setLngLat([e.lngLat.lng, e.lngLat.lat])
-              .addTo(m);
+            if (_previewTimer) clearTimeout(_previewTimer);
+            // Show straight dashed preview immediately
             try { m.removeLayer('route-preview-layer'); } catch {}
             try { m.removeSource('route-preview'); } catch {}
+            const coords: [number, number][] = [clicked.fromCoord, [e.lngLat.lng, e.lngLat.lat], clicked.toCoord];
             m.addSource('route-preview', {
               type: 'geojson',
-              data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [clicked.fromCoord, [e.lngLat.lng, e.lngLat.lat], clicked.toCoord] } },
+              data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } },
             });
             m.addLayer({ id: 'route-preview-layer', type: 'line', source: 'route-preview', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#00b4ff', 'line-width': 3, 'line-opacity': 0.7, 'line-dasharray': [2, 3] } });
-            marker.on('drag', () => updateDragPreview(marker, clicked, m, tripIdRef.current));
-            marker.on('dragend', () => {
-              const pos = marker.getLngLat();
-              marker.remove();
+            // Fetch OSRM rerouted preview
+            const tripId = tripIdRef.current;
+            if (tripId) {
+              fetch(`/api/trips/${tripId}/route-preview`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ waypoints: [{ longitude: clicked.fromCoord[0], latitude: clicked.fromCoord[1] }, { longitude: e.lngLat.lng, latitude: e.lngLat.lat }, { longitude: clicked.toCoord[0], latitude: clicked.toCoord[1] }] }),
+              }).then(r => r.json()).then(data => {
+                if (data.geometry && data.geometry.length > 1) {
+                  try {
+                    const src = m.getSource('route-preview') as maplibregl.GeoJSONSource;
+                    if (src) src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: data.geometry } });
+                  } catch {}
+                }
+              }).catch(() => {});
+            }
+            // Auto-clear after 4 seconds
+            _previewTimer = setTimeout(() => {
               try { m.removeLayer('route-preview-layer'); } catch {}
               try { m.removeSource('route-preview'); } catch {}
-              onRouteWaypointDropRef.current?.({ lat: pos.lat, lng: pos.lng }, { fromId: clicked.fromId, toId: clicked.toId });
-            });
-            return;
+            }, 4000);
           }
         }
       }
@@ -231,25 +238,4 @@ function findClickedLeg(lngLat: { lat: number; lng: number }, legGeometries: { f
   return best;
 }
 
-let _previewTimer: ReturnType<typeof setTimeout> | null = null;
-function updateDragPreview(marker: maplibregl.Marker, dragInfo: { fromId: number; toId: number; fromCoord: [number, number]; toCoord: [number, number] }, m: maplibregl.Map, tripId: number | undefined) {
-  const pos = marker.getLngLat();
-  const previewCoords: [number, number][] = [dragInfo.fromCoord, [pos.lng, pos.lat], dragInfo.toCoord];
-  try {
-    const src = m.getSource('route-preview') as maplibregl.GeoJSONSource;
-    if (src) src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: previewCoords } });
-  } catch {}
-  if (_previewTimer) clearTimeout(_previewTimer);
-  if (!tripId) return;
-  _previewTimer = setTimeout(async () => {
-    try {
-      const coords = [dragInfo.fromCoord, [pos.lng, pos.lat], dragInfo.toCoord].map(c => ({ longitude: c[0], latitude: c[1] }));
-      const res = await fetch(`/api/trips/${tripId}/route-preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waypoints: coords }) });
-      const data = await res.json();
-      if (data.geometry && data.geometry.length > 1) {
-        const src = m.getSource('route-preview') as maplibregl.GeoJSONSource;
-        if (src) src.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: data.geometry } });
-      }
-    } catch {}
-  }, 500);
-}
+
