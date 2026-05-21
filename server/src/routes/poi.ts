@@ -3,6 +3,7 @@ import { db, schema } from '../db';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { findPOIs, ALL_CATEGORIES, getCategoryLabel, getCategoryIcon, type POICategory } from '../utils/poi';
+import { getEnrichedLandmarks, filterLandmarksByBounds } from '../utils/landmarks';
 
 const router = Router();
 
@@ -82,6 +83,26 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
   } catch (err: any) {
     console.error('POI error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch POIs' });
+  }
+});
+
+// Get famous US landmarks visible in the current viewport
+router.get('/:tripId/landmarks', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const south = parseFloat(req.query.south as string);
+    const west = parseFloat(req.query.west as string);
+    const north = parseFloat(req.query.north as string);
+    const east = parseFloat(req.query.east as string);
+
+    const allLandmarks = await getEnrichedLandmarks();
+    if (!isNaN(south) && !isNaN(north) && !isNaN(west) && !isNaN(east)) {
+      const visible = filterLandmarksByBounds(allLandmarks, south, west, north, east);
+      return res.json({ landmarks: visible, total: visible.length });
+    }
+    return res.json({ landmarks: allLandmarks, total: allLandmarks.length });
+  } catch (err: any) {
+    console.error('Landmarks error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch landmarks' });
   }
 });
 

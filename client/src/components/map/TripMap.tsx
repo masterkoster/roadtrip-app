@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 
 const MAP_STYLES = {
@@ -12,6 +12,15 @@ type MapStyle = keyof typeof MAP_STYLES;
 interface TrackPoint { latitude: number; longitude: number; elevation?: number | null; timestamp?: string | null; }
 interface Waypoint { id?: number; name: string; description?: string | null; latitude: number; longitude: number; }
 interface Photo { id?: number; url: string; thumbnailUrl?: string | null; latitude: number | null; longitude: number | null; caption?: string | null; }
+
+interface Landmark {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  description: string;
+  thumbnail: string | null;
+}
 
 interface TripMapProps {
   trackPoints: TrackPoint[];
@@ -31,12 +40,15 @@ interface TripMapProps {
   onDeleteWaypoint?: (id: number) => void;
   flyToBounds?: [number, number][] | null;
   mapRef?: React.MutableRefObject<any>;
+  landmarks?: Landmark[];
+  onLandmarkClick?: (landmark: Landmark) => void;
 }
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
-  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, onRouteViaPointDrop, onDeleteWaypoint, flyToBounds, mapRef: mapRefProp,
+  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, onRouteViaPointDrop, onDeleteWaypoint,
+  flyToBounds, mapRef: mapRefProp, landmarks = [], onLandmarkClick,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -50,6 +62,8 @@ export default function TripMap({
   const onDeleteWaypointRef = useRef(onDeleteWaypoint);
   const tripIdRef = useRef(tripId);
   const onMapClickRef = useRef(onMapClick);
+  const onLandmarkClickRef = useRef(onLandmarkClick);
+  onLandmarkClickRef.current = onLandmarkClick;
   legGeometriesRef.current = legGeometries;
   waypointsRef.current = waypoints;
   onRouteWaypointDropRef.current = onRouteWaypointDrop;
@@ -246,6 +260,56 @@ export default function TripMap({
       m.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1500 });
     }
   }, [waypoints, colors.waypoint, ready]);
+
+  // Landmark markers (shown when zoomed out)
+  const landmarkMarkersRef = useRef<maplibregl.Marker[]>([]);
+
+  const renderLandmarks = useCallback(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+
+    landmarkMarkersRef.current.forEach(mk => mk.remove());
+    landmarkMarkersRef.current = [];
+
+    if (landmarks.length === 0) return;
+    const showLandmarks = m.getZoom() <= 7;
+    if (!showLandmarks) return;
+
+    landmarks.forEach((lm) => {
+      const el = document.createElement('div');
+      el.innerHTML = `<div style="width:36px;height:36px;background:linear-gradient(135deg,#8b5cf6,#6366f1);border:2px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;line-height:1;">🏛️</div>`;
+      const popup = new maplibregl.Popup({ offset: 25 }).setHTML(
+        '<div style="min-width:200px;max-width:260px;font-family:system-ui,sans-serif">' +
+        (lm.thumbnail ? `<img src="${lm.thumbnail}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:6px;margin-bottom:8px" onerror="this.style.display='none'" />` : '') +
+        '<strong style="font-size:14px;color:#1f2937">' + lm.name + '</strong>' +
+        '<p style="font-size:11px;color:#6b7280;margin:4px 0 8px;line-height:1.4">' + lm.description + '</p>' +
+        '<button data-lm="' + lm.id + '" style="padding:5px 12px;font-size:11px;font-weight:600;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer">+ Add as waypoint</button>' +
+        '</div>'
+      );
+      const mk = new maplibregl.Marker({ element: el.firstChild as HTMLElement })
+        .setLngLat([lm.longitude, lm.latitude])
+        .setPopup(popup)
+        .addTo(m);
+      popup.on('open', () => {
+        popup.getElement()?.querySelector('button[data-lm]')?.addEventListener('click', () => {
+          onLandmarkClickRef.current?.(lm);
+          popup.remove();
+        });
+      });
+      landmarkMarkersRef.current.push(mk);
+    });
+  }, [landmarks, ready]);
+
+  useEffect(() => { renderLandmarks(); }, [renderLandmarks]);
+
+  // Re-render landmarks on zoom change
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const handler = () => { renderLandmarks(); };
+    m.on('zoomend', handler);
+    return () => { m.off('zoomend', handler); };
+  }, [renderLandmarks]);
 
   // Fly to bounds (day click)
   useEffect(() => {

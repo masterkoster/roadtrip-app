@@ -190,8 +190,28 @@ export default function PlanningPage() {
     }
   }, [dayItinerary?.days?.length]);
 
-  // Map instance ref (for getting viewport bounds)
+  // Map instance ref
   const mapRef = useRef<any>(null);
+
+  // Landmark state (famous US attractions shown when zoomed out)
+  const [landmarks, setLandmarks] = useState<any[]>([]);
+  const [mapReady, setMapReady] = useState(false);
+
+  // Fetch landmarks when the map viewport changes
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+    const m = mapRef.current;
+    const fetchLm = async () => {
+      try {
+        const b = m.getBounds();
+        const { data } = await api.get(`/poi/${id}/landmarks?south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}`);
+        setLandmarks(data.landmarks || []);
+      } catch { /* silent */ }
+    };
+    fetchLm();
+    m.on('moveend', fetchLm);
+    return () => { m.off('moveend', fetchLm); };
+  }, [id, mapReady]);
 
   // POI state
   const [pois, setPois] = useState<Record<string, any[]>>({});
@@ -379,6 +399,25 @@ export default function PlanningPage() {
     if (tab === 'find' && trackPoints.length >= 2 && poiCategories.length === 0) fetchPOIs();
   }, [tab, trackPoints?.length, poiRadius]);
 
+  // Handle landmark "Add as waypoint"
+  const handleLandmarkClick = useCallback(async (lm: any) => {
+    try {
+      await api.post(`/waypoints/trip/${id}`, {
+        name: lm.name,
+        latitude: lm.latitude,
+        longitude: lm.longitude,
+        description: lm.description?.substring(0, 500) || 'Famous US landmark',
+      });
+      toast.success(`Added "${lm.name}"`);
+      if (mapRef.current) {
+        mapRef.current.flyTo({ center: [lm.longitude, lm.latitude], zoom: 10, duration: 1500 });
+      }
+      loadTrip();
+    } catch {
+      toast.error('Failed to add landmark');
+    }
+  }, [id, loadTrip]);
+
   // Delete waypoint
   const handleDeleteWaypoint = useCallback(async (id: number) => {
     try {
@@ -429,6 +468,9 @@ export default function PlanningPage() {
           onRouteViaPointDrop={handleRouteViaPointDrop}
           onDeleteWaypoint={handleDeleteWaypoint}
           flyToBounds={flyToBounds}
+          landmarks={landmarks}
+          onLandmarkClick={handleLandmarkClick}
+          onMapLoaded={() => setMapReady(true)}
         />
       </div>
 
