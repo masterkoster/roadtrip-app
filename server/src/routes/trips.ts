@@ -569,51 +569,42 @@ async function fetchWikipediaPlaces(lat: number, lng: number, radiusKm: number):
   } catch { return []; }
 }
 
-const ATTRACTION_CATEGORIES = ['attraction', 'museum', 'park', 'historical', 'viewpoint', 'entertainment', 'beach'];
-
-async function fetchOverpassPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
-  const bbox = `${lat - radiusKm / 111},${lng - radiusKm / (111 * Math.cos(lat * Math.PI / 180))},${lat + radiusKm / 111},${lng + radiusKm / (111 * Math.cos(lat * Math.PI / 180))}`;
-  const query = ATTRACTION_CATEGORIES.map(cat => {
-    switch (cat) {
-      case 'attraction': return `node[tourism~"^(attraction|zoo|aquarium|theme_park)$"](${bbox});`;
-      case 'museum': return `node[tourism="museum"](${bbox});`;
-      case 'park': return `node[leisure~"^(park|nature_reserve|garden)$"](${bbox});node[boundary="national_park"](${bbox});`;
-      case 'historical': return `node[historic](${bbox});`;
-      case 'viewpoint': return `node[tourism="viewpoint"](${bbox});node[natural="peak"](${bbox});`;
-      case 'entertainment': return `node[amenity~"^(cinema|theatre|casino)$"](${bbox});`;
-      case 'beach': return `node[natural="beach"](${bbox});`;
-      default: return '';
-    }
-  }).join('');
-  const overpassQ = `[out:json][timeout:8];(${query});out center 30;`;
-  try {
-    const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQ)}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    const data: any = await res.json();
-    const elements = data?.elements || [];
-    return elements
-      .filter((el: any) => el.tags?.name)
-      .map((el: any) => {
-        const lat2 = el.lat || el.center?.lat || 0;
-        const lng2 = el.lon || el.center?.lon || 0;
-        const dlat = (lat2 - lat) * Math.PI / 180;
-        const dlon = (lng2 - lng) * Math.PI / 180;
-        const a = Math.sin(dlat / 2) ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dlon / 2) ** 2;
+async function fetchNominatimPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
+  const searchTerms = ['tourist attraction', 'museum', 'park', 'historic site', 'viewpoint', 'cinema', 'beach', 'landmark'];
+  const results: any[] = [];
+  const seen = new Set<string>();
+  for (const term of searchTerms) {
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(term)}&format=json&limit=10&lat=${lat}&lon=${lng}&radius=${Math.round(radiusKm * 1000)}`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'roadtrip-app/1.0' }, signal: AbortSignal.timeout(5000) });
+      if (!res.ok) continue;
+      const data = await res.json() as any[];
+      for (const el of data) {
+        const plat = parseFloat(el.lat);
+        const plng = parseFloat(el.lon);
+        if (isNaN(plat) || isNaN(plng)) continue;
+        const id = `nom_${el.osm_id || (el.lat + el.lon)}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const dlat = (plat - lat) * Math.PI / 180;
+        const dlng = (plng - lng) * Math.PI / 180;
+        const a = Math.sin(dlat / 2) ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(plat * Math.PI / 180) * Math.sin(dlng / 2) ** 2;
         const dist = Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
-        return {
-          title: el.tags.name,
-          description: el.tags.description || el.tags.tourism || el.tags.leisure || el.tags.historic || '',
-          pageId: `osm_${el.id}`,
+        if (dist > radiusKm) continue;
+        results.push({
+          title: el.display_name?.split(',')[0]?.trim() || term,
+          description: el.display_name?.split(',').slice(1, 4).join(',') || '',
+          pageId: id,
           thumbnail: null,
-          latitude: lat2,
-          longitude: lng2,
+          latitude: plat,
+          longitude: plng,
           distance: dist,
-          source: 'overpass',
-        };
-      })
-      .filter((p: any) => p.distance <= radiusKm);
-  } catch { return []; }
+          source: 'nominatim',
+        });
+      }
+    } catch { continue; }
+  }
+  return results;
 }
 
 // Get popular places near a location (Wikipedia + Overpass combined)
@@ -628,15 +619,15 @@ router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Res
       return res.json({ places: cached.data, source: 'cache' });
     }
 
-    const [wikiPlaces, overpassPlaces] = await Promise.all([
+    const [wikiPlaces, osmPlaces] = await Promise.all([
       fetchWikipediaPlaces(lat, lng, radiusKm),
-      fetchOverpassPlaces(lat, lng, radiusKm),
+      fetchNominatimPlaces(lat, lng, radiusKm),
     ]);
 
-    // Merge: keep wikipedia entries first, then add overpass entries that aren't too similar
+    // Merge: keep wikipedia entries first, then add OSM entries that aren't too similar
     const seenTitles = new Set(wikiPlaces.map((p: any) => p.title.toLowerCase()));
     const merged = [...wikiPlaces];
-    for (const op of overpassPlaces) {
+    for (const op of osmPlaces) {
       const normalized = op.title.toLowerCase();
       const isDuplicate = [...seenTitles].some(t => normalized.includes(t) || t.includes(normalized));
       if (!isDuplicate && seenTitles.size < 40) {
