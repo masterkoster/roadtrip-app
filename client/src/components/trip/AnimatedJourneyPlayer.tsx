@@ -34,6 +34,23 @@ interface Waypoint {
   description: string | null;
 }
 
+interface LandmarkPopupMeta {
+  emoji: string;
+  title: string;
+  tagline: string;
+  fact: string;
+  badge: string;
+  image?: string;
+  sticker?: string;
+  palette: {
+    background: string;
+    accent: string;
+    border: string;
+    text: string;
+    ribbon: string;
+  };
+}
+
 interface AnimatedJourneyPlayerProps {
   trackPoints: TrackPoint[];
   waypoints: Waypoint[];
@@ -49,6 +66,279 @@ const EARTH_RADIUS = 6;
 const EARTH_TEXTURE_URL = 'https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg';
 const EARTH_BUMP_URL = 'https://threejs.org/examples/textures/planets/earth_normal_2048.jpg';
 const EARTH_SPEC_URL = 'https://threejs.org/examples/textures/planets/earth_specular_2048.jpg';
+const APPROACH_DURATION = 4200;
+
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+const ensureNormalized = (vector: THREE.Vector3, fallback = new THREE.Vector3(1, 0, 0)): THREE.Vector3 => {
+  if (vector.lengthSq() < 1e-6) {
+    return fallback.clone().normalize();
+  }
+  return vector.normalize();
+};
+
+const computeSideVector = (normal: THREE.Vector3, tangent: THREE.Vector3): THREE.Vector3 => {
+  let side = tangent.clone().cross(normal);
+  if (side.lengthSq() < 1e-6) {
+    side = new THREE.Vector3(0, 1, 0).cross(normal);
+    if (side.lengthSq() < 1e-6) {
+      side = new THREE.Vector3(1, 0, 0).cross(normal);
+    }
+  }
+  return side.normalize();
+};
+
+const VEHICLE_GLYPHS: Record<string, string> = {
+  car: '🚙',
+  rv: '🚐',
+  motorcycle: '🏍️',
+  bike: '🚴',
+};
+
+const createVehicleAvatar = (vehicleType: string, colorHex: string, index: number): THREE.Group => {
+  const type = VEHICLE_GLYPHS[vehicleType] ? vehicleType : 'car';
+  const group = new THREE.Group();
+  const baseColor = new THREE.Color(colorHex || '#f97316');
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: baseColor,
+    roughness: 0.35,
+    metalness: 0.35,
+    emissive: baseColor.clone().multiplyScalar(0.22),
+    emissiveIntensity: 0.5,
+  });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: '#1f2937', roughness: 0.85, metalness: 0.15 });
+  const glassMaterial = new THREE.MeshStandardMaterial({ color: '#0f172a', opacity: 0.75, transparent: true, roughness: 0.25, metalness: 0.05 });
+  const glowMaterial = new THREE.MeshBasicMaterial({ color: '#fef3c7', transparent: true, opacity: 0.45, side: THREE.DoubleSide });
+
+  const halo = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 28), glowMaterial);
+  halo.rotation.x = Math.PI / 2;
+  halo.position.y = 0.01;
+  group.add(halo);
+
+  if (type === 'rv') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.28, 0.3), bodyMaterial);
+    body.position.set(-0.05, 0.22, 0);
+    group.add(body);
+
+    const loft = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.18, 0.28), glassMaterial);
+    loft.position.set(-0.12, 0.35, 0);
+    group.add(loft);
+
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.28), bodyMaterial);
+    cab.position.set(0.36, 0.24, 0);
+    group.add(cab);
+
+    [-0.3, 0.08].forEach(xPos => {
+      const wheelLeft = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 12, 20), trimMaterial);
+      wheelLeft.position.set(xPos, 0.06, 0.16);
+      wheelLeft.rotation.y = Math.PI / 2;
+      group.add(wheelLeft);
+      const wheelRight = wheelLeft.clone();
+      wheelRight.position.z = -0.16;
+      group.add(wheelRight);
+    });
+  } else if (type === 'motorcycle') {
+    const frame = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.36, 6, 16), bodyMaterial);
+    frame.rotation.z = Math.PI / 2;
+    frame.position.set(0, 0.23, 0);
+    group.add(frame);
+
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.14), bodyMaterial);
+    seat.position.set(-0.05, 0.32, 0);
+    group.add(seat);
+
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.26, 12), trimMaterial);
+    handle.rotation.z = Math.PI / 2;
+    handle.position.set(0.25, 0.32, 0);
+    group.add(handle);
+
+    const frontWheel = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.02, 14, 22), trimMaterial);
+    frontWheel.rotation.y = Math.PI / 2;
+    frontWheel.position.set(0.3, 0.08, 0);
+    group.add(frontWheel);
+    const backWheel = frontWheel.clone();
+    backWheel.position.x = -0.32;
+    group.add(backWheel);
+  } else if (type === 'bike') {
+    const frameMain = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.52, 18), bodyMaterial);
+    frameMain.rotation.z = Math.PI / 4;
+    frameMain.position.set(-0.02, 0.26, 0);
+    group.add(frameMain);
+
+    const seatPost = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.28, 12), bodyMaterial);
+    seatPost.rotation.z = Math.PI / 2;
+    seatPost.position.set(-0.22, 0.3, 0);
+    group.add(seatPost);
+
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.24, 12), trimMaterial);
+    handle.rotation.z = Math.PI / 2;
+    handle.position.set(0.24, 0.32, 0);
+    group.add(handle);
+
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.04, 0.08), bodyMaterial);
+    seat.position.set(-0.2, 0.34, 0);
+    group.add(seat);
+
+    const frontWheel = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.015, 12, 20), trimMaterial);
+    frontWheel.rotation.y = Math.PI / 2;
+    frontWheel.position.set(0.3, 0.06, 0);
+    group.add(frontWheel);
+    const backWheel = frontWheel.clone();
+    backWheel.position.x = -0.3;
+    group.add(backWheel);
+  } else {
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.18, 0.26), bodyMaterial);
+    chassis.position.set(-0.04, 0.18, 0);
+    group.add(chassis);
+
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.16, 0.22), glassMaterial);
+    cabin.position.set(-0.1, 0.3, 0);
+    group.add(cabin);
+
+    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.28, 18), bodyMaterial);
+    hood.rotation.z = Math.PI / 2;
+    hood.position.set(0.32, 0.18, 0);
+    group.add(hood);
+
+    const wheelPositions: Array<[number, number, number]> = [
+      [-0.2, 0.05, 0.15],
+      [-0.2, 0.05, -0.15],
+      [0.2, 0.05, 0.15],
+      [0.2, 0.05, -0.15],
+    ];
+    wheelPositions.forEach(([x, y, z]) => {
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.025, 12, 24), trimMaterial);
+      wheel.position.set(x, y, z);
+      wheel.rotation.y = Math.PI / 2;
+      group.add(wheel);
+    });
+  }
+
+  const beacon = new THREE.Mesh(
+    new THREE.ConeGeometry(0.08, 0.16, 12),
+    new THREE.MeshStandardMaterial({ color: '#fde68a', emissive: '#fbbf24', emissiveIntensity: 0.9, roughness: 0.4 })
+  );
+  beacon.position.set(-0.28, 0.32, 0);
+  group.add(beacon);
+
+  const scale = 0.85 + Math.min(index, 4) * 0.05;
+  group.scale.setScalar(scale);
+  group.rotation.z = Math.PI / 2;
+
+  return group;
+};
+
+const LANDMARK_POPUPS: Record<string, LandmarkPopupMeta> = {
+  'big ben': {
+    emoji: '🕰️',
+    title: 'Clocktower Reverie',
+    tagline: 'Chimes over the Thames',
+    fact: 'Big Ben is the nickname for the great bell that has marked London’s rhythm since 1859.',
+    badge: 'Heritage Icon',
+    image: 'https://images.unsplash.com/photo-1528909514045-2fa4ac7a08ba?auto=format&fit=crop&w=900&q=80',
+    sticker: '🇬🇧',
+    palette: {
+      background: 'linear-gradient(140deg, #0b122c 0%, #1f2d50 55%, #c18a2b 120%)',
+      accent: 'rgba(255,198,92,0.55)',
+      border: 'rgba(255,230,173,0.32)',
+      text: '#f9fafb',
+      ribbon: '#facc15',
+    },
+  },
+  'the big bang tower': {
+    emoji: '🕰️',
+    title: 'Clocktower Reverie',
+    tagline: 'Chimes over the Thames',
+    fact: 'Big Ben is the nickname for the great bell that has marked London’s rhythm since 1859.',
+    badge: 'Heritage Icon',
+    image: 'https://images.unsplash.com/photo-1528909514045-2fa4ac7a08ba?auto=format&fit=crop&w=900&q=80',
+    sticker: '🇬🇧',
+    palette: {
+      background: 'linear-gradient(140deg, #0b122c 0%, #1f2d50 55%, #c18a2b 120%)',
+      accent: 'rgba(255,198,92,0.55)',
+      border: 'rgba(255,230,173,0.32)',
+      text: '#f9fafb',
+      ribbon: '#facc15',
+    },
+  },
+  'eiffel tower': {
+    emoji: '🗼',
+    title: 'Parisian Skyline',
+    tagline: 'Iron lacework at sunset',
+    fact: 'The Eiffel Tower can grow more than 15 cm during hot Parisian summers as iron expands.',
+    badge: 'City Lights',
+    image: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=900&q=80',
+    sticker: '✨',
+    palette: {
+      background: 'linear-gradient(135deg, #280f36 0%, #43275a 55%, #f97316 120%)',
+      accent: 'rgba(236,72,153,0.45)',
+      border: 'rgba(252,231,243,0.28)',
+      text: '#fff5f5',
+      ribbon: '#fb7185',
+    },
+  },
+  'statue of liberty': {
+    emoji: '🗽',
+    title: 'Harbor Beacon',
+    tagline: 'Liberty lighting the world',
+    fact: 'Lady Liberty arrived from France in 214 crates and was assembled on Bedloe’s Island in 1886.',
+    badge: 'Harbor Story',
+    image: 'https://images.unsplash.com/photo-1549924231-f129b911e442?auto=format&fit=crop&w=900&q=80',
+    sticker: '🇺🇸',
+    palette: {
+      background: 'linear-gradient(145deg, #062b3c 0%, #0d4f68 60%, #34d399 130%)',
+      accent: 'rgba(45,212,191,0.45)',
+      border: 'rgba(191,242,255,0.28)',
+      text: '#f0fdf4',
+      ribbon: '#4ade80',
+    },
+  },
+  'grand canyon': {
+    emoji: '🧭',
+    title: 'Canyon Vista',
+    tagline: 'Strata written in sunrise',
+    fact: 'The Grand Canyon reveals nearly two billion years of Earth’s geological history in its layers.',
+    badge: 'Geology Epic',
+    image: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80',
+    sticker: '🏜️',
+    palette: {
+      background: 'linear-gradient(140deg, #2a0f12 0%, #6b2f19 55%, #f59e0b 120%)',
+      accent: 'rgba(248,113,113,0.45)',
+      border: 'rgba(254,215,170,0.32)',
+      text: '#fdf6ec',
+      ribbon: '#f97316',
+    },
+  },
+};
+
+const FALLBACK_EMOJIS = ['🌄', '🌅', '🏕️', '🏛️', '🎡'];
+
+const getLandmarkPopupMeta = (waypoint: Waypoint, nearbyPhotos: Photo[]): LandmarkPopupMeta => {
+  const key = waypoint.name.toLowerCase();
+  const base = LANDMARK_POPUPS[key];
+  if (base) {
+    return { ...base, title: base.title || waypoint.name };
+  }
+
+  const photo = nearbyPhotos.find(p => !!(p.thumbnailUrl || p.url));
+  const accentColor = '#f97316';
+  return {
+    emoji: FALLBACK_EMOJIS[Math.floor(Math.random() * FALLBACK_EMOJIS.length)] ?? '📍',
+    title: waypoint.name,
+    tagline: 'Roadside highlight',
+    fact: `Mark this moment at ${waypoint.name}—it is a signature chapter of the journey.`,
+    badge: 'Discovery',
+    image: photo?.thumbnailUrl || photo?.url,
+    palette: {
+      background: 'linear-gradient(140deg, #0b1729 0%, #132a45 60%, #f97316 130%)',
+      accent: 'rgba(251,191,36,0.5)',
+      border: 'rgba(255,255,255,0.18)',
+      text: '#f8fafc',
+      ribbon: accentColor,
+    },
+    sticker: '✨',
+  };
+};
 
 function latLonToVector3(lat: number, lon: number, radius: number) {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -78,7 +368,7 @@ export default function AnimatedJourneyPlayer({
   const [progress, setProgress] = useState(0);
   const renderLoopRef = useRef<number>();
   const progressLoopRef = useRef<number>();
-  const phaseRef = useRef<'overview' | 'journey'>('overview');
+  const phaseRef = useRef<'overview' | 'approach' | 'journey'>('overview');
   const overviewAngleRef = useRef(0);
   const pauseUntilRef = useRef<number | null>(null);
   const pauseStartRef = useRef<number | null>(null);
@@ -87,9 +377,12 @@ export default function AnimatedJourneyPlayer({
   const highlightObjectsRef = useRef<Record<number, THREE.Object3D>>({});
   const highlightTexturesRef = useRef<Record<number, THREE.Texture>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [popup, setPopup] = useState<{ waypoint: Waypoint; meta: { emoji: string; fact: string } | null } | null>(null);
+  const [popup, setPopup] = useState<{ waypoint: Waypoint; meta: LandmarkPopupMeta } | null>(null);
   const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastHighlightRef = useRef<number | null>(null);
+  const approachStartRef = useRef<number | null>(null);
+  const approachFromRef = useRef<THREE.Vector3 | null>(null);
+  const [introStage, setIntroStage] = useState<'orbit' | 'approach' | 'hidden'>('orbit');
 
   const pathPoints = useMemo(() => {
     if (trackPoints.length > 1) return trackPoints;
@@ -111,12 +404,25 @@ export default function AnimatedJourneyPlayer({
     pauseStartRef.current = null;
     startRef.current = null;
     phaseRef.current = 'overview';
-  }, [pathPoints.length, highlights.length]);
+    approachStartRef.current = null;
+    approachFromRef.current = null;
+    setIntroStage(routeVectors.length > 1 ? 'orbit' : 'hidden');
+  }, [pathPoints.length, highlights.length, routeVectors.length]);
 
   useEffect(() => {
-    const timer = setTimeout(() => { phaseRef.current = 'journey'; }, 2000);
+    if (routeVectors.length < 2) {
+      phaseRef.current = 'journey';
+      setIntroStage('hidden');
+      return;
+    }
+    const timer = setTimeout(() => {
+      phaseRef.current = 'approach';
+      approachStartRef.current = null;
+      approachFromRef.current = null;
+      setIntroStage('approach');
+    }, 2600);
     return () => clearTimeout(timer);
-  }, [pathPoints.length]);
+  }, [routeVectors.length]);
 
   useEffect(() => {
     if (!containerRef.current || rendererRef.current) return;
@@ -195,21 +501,9 @@ export default function AnimatedJourneyPlayer({
     }
 
     participantMeshes.current = participants.map((p, idx) => {
-      const group = new THREE.Group();
-      const bodyGeom = new THREE.ConeGeometry(0.12, 0.4, 16);
-      bodyGeom.translate(0, 0.2, 0);
-      const bodyMat = new THREE.MeshStandardMaterial({ color: p.colorHex || '#f97316', emissive: '#1f2937', emissiveIntensity: 0.3 });
-      const body = new THREE.Mesh(bodyGeom, bodyMat);
-      body.rotation.z = Math.PI / 2;
-      group.add(body);
-      const haloGeom = new THREE.RingGeometry(0.16, 0.18, 16);
-      const haloMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
-      const halo = new THREE.Mesh(haloGeom, haloMat);
-      halo.rotation.x = Math.PI / 2;
-      halo.position.set(0, 0, 0);
-      group.add(halo);
-      scene.add(group);
-      return group;
+      const avatar = createVehicleAvatar(p.vehicleType, p.colorHex, idx);
+      scene.add(avatar);
+      return avatar;
     });
 
     Object.values(highlightTexturesRef.current).forEach(tex => tex.dispose());
@@ -247,7 +541,7 @@ export default function AnimatedJourneyPlayer({
 
     window.addEventListener('resize', onResize);
 
-    const animate = () => {
+    const animate = (timestamp: number) => {
       renderLoopRef.current = requestAnimationFrame(animate);
 
       if (!cameraRef.current) return;
@@ -267,6 +561,42 @@ export default function AnimatedJourneyPlayer({
         camera.position.lerp(desired, 0.02);
         camera.up.lerp(new THREE.Vector3(0, 1, 0), 0.05);
         camera.lookAt(0, 0, 0);
+      } else if (phaseRef.current === 'approach') {
+        if (routeVectors.length) {
+          const firstPoint = routeVectors[0];
+          const nextPoint = routeVectors[1] ?? firstPoint;
+          if (approachStartRef.current == null) {
+            approachStartRef.current = timestamp;
+            approachFromRef.current = camera.position.clone();
+          }
+          const elapsed = Math.min(Math.max((timestamp - (approachStartRef.current ?? timestamp)) / APPROACH_DURATION, 0), 1);
+          const eased = easeInOutCubic(elapsed);
+          const normal = firstPoint.clone().normalize();
+          const fallbackAxis = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+          const tangent = ensureNormalized(nextPoint.clone().sub(firstPoint), fallbackAxis);
+          const side = computeSideVector(normal, tangent);
+          const from = approachFromRef.current ?? normal.clone().multiplyScalar(EARTH_RADIUS * 3.6);
+          const to = firstPoint.clone()
+            .add(normal.clone().multiplyScalar(1.25))
+            .add(side.multiplyScalar(0.9));
+          const position = from.clone().lerp(to, eased);
+          camera.position.copy(position);
+          camera.up.lerp(normal, 0.12);
+          const focus = firstPoint.clone()
+            .add(tangent.clone().multiplyScalar(0.6 * (1 - eased)))
+            .add(normal.clone().multiplyScalar(0.25));
+          camera.lookAt(focus);
+          if (elapsed >= 1) {
+            phaseRef.current = 'journey';
+            setIntroStage(prev => (prev === 'hidden' ? prev : 'hidden'));
+            startRef.current = null;
+            pausedTotalRef.current = 0;
+            pauseUntilRef.current = null;
+            pauseStartRef.current = null;
+            approachStartRef.current = null;
+            approachFromRef.current = null;
+          }
+        }
       } else {
         const idx = Math.min(Math.floor(progress * (routeVectors.length - 1)), routeVectors.length - 1);
         const point = routeVectors[idx];
@@ -274,8 +604,9 @@ export default function AnimatedJourneyPlayer({
           const normal = point.clone().normalize();
           const nextIdx = Math.min(idx + 1, routeVectors.length - 1);
           const nextPoint = routeVectors[nextIdx] ?? point;
-          const tangent = nextPoint.clone().sub(point).normalize();
-          const side = tangent.clone().cross(normal).normalize();
+          const fallbackAxis = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+          const tangent = ensureNormalized(nextPoint.clone().sub(point), fallbackAxis);
+          const side = computeSideVector(normal, tangent);
           const desired = point.clone()
             .add(normal.clone().multiplyScalar(1.7))
             .add(side.multiplyScalar(0.6));
@@ -294,7 +625,7 @@ export default function AnimatedJourneyPlayer({
       renderer.render(scene, camera);
     };
 
-    animate();
+    renderLoopRef.current = requestAnimationFrame(animate);
 
     return () => {
       if (rendererRef.current) {
@@ -344,10 +675,11 @@ export default function AnimatedJourneyPlayer({
       const basePoint = routeVectors[idx];
       const nextPoint = routeVectors[nextIdx] ?? basePoint;
       const normal = basePoint.clone().normalize();
-      const tangent = nextPoint.clone().sub(basePoint).normalize();
+      const fallbackAxis = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+      const tangent = ensureNormalized(nextPoint.clone().sub(basePoint), fallbackAxis);
       participantMeshes.current.forEach((mesh, participantIdx) => {
         const offset = normal.clone().multiplyScalar(EARTH_RADIUS + 0.25 + participantIdx * 0.12);
-        const side = tangent.clone().cross(normal).normalize().multiplyScalar(participantIdx * 0.18);
+        const side = computeSideVector(normal, tangent).multiplyScalar(participantIdx * 0.18);
         const forward = tangent.clone().multiplyScalar(participantIdx === 0 ? 0.0 : participantIdx * 0.25);
         const desired = offset.add(side).add(forward);
         mesh.position.lerp(desired, 0.35);
@@ -390,8 +722,10 @@ export default function AnimatedJourneyPlayer({
     }
     const duration = Math.max(15000, routeVectors.length * 450);
     const step = (timestamp: number) => {
-      if (phaseRef.current === 'overview' && timestamp > (startRef.current ?? timestamp) + 2500) {
-        phaseRef.current = 'journey';
+      if (phaseRef.current !== 'journey') {
+        startRef.current = null;
+        progressLoopRef.current = requestAnimationFrame(step);
+        return;
       }
       if (!startRef.current) startRef.current = timestamp;
       if (pauseUntilRef.current && timestamp < pauseUntilRef.current) {
@@ -500,39 +834,107 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
     const highlightIds = new Set(highlights.map(h => h.waypointId));
     if (highlightIds.has(currentWaypoint.id) && lastHighlightRef.current !== currentWaypoint.id) {
       lastHighlightRef.current = currentWaypoint.id;
-      const meta = LANDMARK_POPUPS[currentWaypoint.name.toLowerCase()] || null;
+      const meta = getLandmarkPopupMeta(currentWaypoint, waypointPhotos);
       setPopup({ waypoint: currentWaypoint, meta });
       if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
-      popupTimerRef.current = setTimeout(() => setPopup(null), 5000);
+      popupTimerRef.current = setTimeout(() => setPopup(null), 5200);
       const now = performance.now();
       pauseStartRef.current = now;
       pauseUntilRef.current = now + 4500;
       phaseRef.current = 'journey';
     }
-  }, [currentWaypoint, highlights]);
+  }, [currentWaypoint, highlights, waypointPhotos]);
 
   useEffect(() => () => {
     if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
   }, []);
 
+  const heroImage = popup?.meta.image ?? null;
+
   return (
     <div className="fixed inset-0 bg-black flex flex-col text-white">
       <div className="absolute inset-0" ref={containerRef} />
+      {introStage !== 'hidden' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 text-center px-6 py-3 bg-white/5 backdrop-blur-md rounded-2xl border border-white/10" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>
+          <div className="text-[11px] uppercase tracking-[0.5em] text-white/50 mb-2">
+            {introStage === 'orbit' ? 'Global Overview' : 'Approach Vector'}
+          </div>
+          <div className="text-2xl font-semibold text-white drop-shadow-[0_6px_18px_rgba(0,0,0,0.45)]">
+            {introStage === 'orbit' ? 'Charting Your Journey' : 'Diving Toward The Route'}
+          </div>
+        </div>
+      )}
       {popup && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-white text-gray-800 rounded-3xl shadow-2xl border border-amber-100 px-6 py-4 max-w-md text-center" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>
-          <div className="text-4xl mb-2">{popup.meta?.emoji || '📍'}</div>
-          <h3 className="text-xl font-bold mb-1">{popup.waypoint.name}</h3>
-          <p className="text-sm text-gray-500 leading-relaxed">{popup.meta?.fact || 'A memorable stop on your journey!'}</p>
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 w-[420px] max-w-[90vw] z-[65]" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>
+          <div
+            className="relative rounded-[28px] overflow-hidden border shadow-[0_24px_46px_rgba(6,11,34,0.55)]"
+            style={{
+              background: popup.meta.palette.background,
+              borderColor: popup.meta.palette.border,
+            }}
+          >
+            <div
+              className="absolute inset-0 opacity-65"
+              style={heroImage ? {
+                backgroundImage: `url(${heroImage})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                filter: 'saturate(1.2)',
+              } : {
+                background: 'radial-gradient(circle at 35% 25%, rgba(255,255,255,0.18), transparent 55%)',
+              }}
+            />
+            <div className="absolute -left-14 top-10 w-40 h-40 rounded-full blur-3xl" style={{ background: popup.meta.palette.accent }} />
+            <div className="absolute -right-12 bottom-0 w-32 h-32 rounded-full blur-3xl opacity-60" style={{ background: popup.meta.palette.accent }} />
+            <div className="relative px-6 pt-6 pb-7 space-y-4 backdrop-blur-[2px]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="text-4xl drop-shadow-[0_8px_16px_rgba(0,0,0,0.45)]">{popup.meta.emoji}</span>
+                  <div>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] uppercase tracking-[0.4em] bg-white/15 text-white/80 border border-white/20" style={{ color: popup.meta.palette.text }}>
+                      {popup.meta.badge}
+                    </div>
+                    <h3 className="text-2xl font-semibold mt-2 leading-tight" style={{ color: popup.meta.palette.text }}>
+                      {popup.meta.title || popup.waypoint.name}
+                    </h3>
+                    <div className="text-[11px] uppercase tracking-[0.35em] text-white/70 mt-1" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+                      {popup.meta.tagline}
+                    </div>
+                  </div>
+                </div>
+                {popup.meta.sticker && (
+                  <div className="text-lg px-2.5 py-1 rounded-full bg-white/10 border border-white/20 text-white shadow-lg">
+                    {popup.meta.sticker}
+                  </div>
+                )}
+              </div>
+              <div className="bg-black/25 border border-white/15 rounded-[20px] px-5 py-4 shadow-inner" style={{ color: popup.meta.palette.text }}>
+                <p className="text-sm leading-relaxed text-white/90" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>{popup.meta.fact}</p>
+                <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.35em] text-white/50" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+                  <span>{popup.waypoint.name}</span>
+                  <span>{popup.waypoint.latitude.toFixed(2)}° / {popup.waypoint.longitude.toFixed(2)}°</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
       <div className="absolute top-4 left-4 flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl" style={{ fontFamily: 'system-ui, sans-serif' }}>
         {participants.length ? (
-          participants.map(p => (
-            <div key={p.id} className="flex items-center gap-2">
-              <span className="inline-block w-3 h-3 rounded-full" style={{ background: p.colorHex || '#fb7185' }} />
-              <span className="text-xs text-white/80 font-medium">{p.name}</span>
-            </div>
-          ))
+          participants.map(p => {
+            const glyph = VEHICLE_GLYPHS[p.vehicleType] || '🚙';
+            return (
+              <div key={p.id} className="flex items-center gap-2">
+                <span
+                  className="flex items-center justify-center w-7 h-7 rounded-full text-base shadow-lg"
+                  style={{ background: `${p.colorHex || '#fb7185'}33`, border: `1px solid ${p.colorHex || '#fb7185'}` }}
+                >
+                  {glyph}
+                </span>
+                <span className="text-xs text-white/80 font-medium">{p.name}</span>
+              </div>
+            );
+          })
         ) : (
           <span className="text-xs text-white/70">Solo Traveler</span>
         )}
@@ -575,10 +977,3 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
     </div>
   );
 }
-const LANDMARK_POPUPS: Record<string, { emoji: string; fact: string }> = {
-  'big ben': { emoji: '🕰️', fact: 'Big Ben is actually the nickname for the great bell of the clock at the Palace of Westminster.' },
-  'the big bang tower': { emoji: '🕰️', fact: 'Big Ben is one of London’s most iconic sights, chiming since 1859.' },
-  'eiffel tower': { emoji: '🗼', fact: 'The Eiffel Tower grows about 15 cm taller in the summer heat.' },
-  'statue of liberty': { emoji: '🗽', fact: 'Lady Liberty was a gift from France and arrived in 214 crates.' },
-  'grand canyon': { emoji: '🏜️', fact: 'The Grand Canyon is 277 miles long and up to 6,000 feet deep.' },
-};

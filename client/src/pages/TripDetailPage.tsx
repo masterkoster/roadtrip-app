@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import TripMap from '../components/map/TripMap';
@@ -6,8 +6,8 @@ import ElevationProfile from '../components/trip/ElevationProfile';
 import PhotoGallery from '../components/trip/PhotoGallery';
 import StoryPlayer from '../components/trip/StoryPlayer';
 import { VehicleBadge } from '../components/trip/VehicleIcon';
-import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import ParticipantPanel from '../components/trip/ParticipantPanel';
 
 interface TrackPoint { id: number; latitude: number; longitude: number; elevation: number | null; timestamp: string | null; }
 interface Waypoint { id: number; name: string; description: string | null; latitude: number; longitude: number; orderIndex: number; duration: number | null; dayIndex: number | null; }
@@ -16,6 +16,8 @@ interface Guide { id: number; title: string; description: string | null; difficu
 interface Trip { id: number; title: string; description: string | null; distance: number | null; duration: number | null; startDate: string | null; endDate: string | null; isPublic: string; vehicle: string; }
 
 interface StorySegment { id: number; title: string; content: string; orderIndex: number; waypointId: number | null; }
+
+type StoryParticipant = { id: number; name: string; vehicleType: string; colorHex: string };
 
 function formatDuration(seconds: number | null) {
   if (!seconds) return null;
@@ -69,6 +71,7 @@ export default function TripDetailPage() {
   const [showingStory, setShowingStory] = useState(false);
   const [loadingStory, setLoadingStory] = useState(false);
   const [storyMode, setStoryMode] = useState<'storybook' | 'animated'>('storybook');
+  const [storyParticipants, setStoryParticipants] = useState<StoryParticipant[]>([]);
 
   useEffect(() => {
     api.get(`/trips/${id}`).then(({ data }) => {
@@ -104,6 +107,7 @@ export default function TripDetailPage() {
       const { data } = await api.get(`/stories/${id}`);
       setStoryData(data);
       setStoryMode((data.settings?.defaultMode as 'storybook' | 'animated') || 'storybook');
+      setStoryParticipants(data.participants && data.participants.length > 0 ? data.participants : []);
       setShowingStory(true);
     } catch (err: any) {
       if (err.response?.status === 404) toast.error('No guide found for this trip');
@@ -112,11 +116,20 @@ export default function TripDetailPage() {
     setLoadingStory(false);
   };
 
-  const storyParticipants = useMemo(() => {
-    if (!storyData) return [{ id: 0, name: 'Traveler', vehicleType: trip?.vehicle || 'car', colorHex: '#f97316' }];
-    if (storyData.participants && storyData.participants.length > 0) return storyData.participants;
+  const updateStoryParticipants = useCallback<React.Dispatch<React.SetStateAction<StoryParticipant[]>>>((updater) => {
+    setStoryParticipants(prev => {
+      const next = typeof updater === 'function'
+        ? (updater as (prev: StoryParticipant[]) => StoryParticipant[])(prev)
+        : updater;
+      setStoryData(current => current ? { ...current, participants: next } : current);
+      return next;
+    });
+  }, []);
+
+  const participantsForPlayback = useMemo(() => {
+    if (storyParticipants.length > 0) return storyParticipants;
     return [{ id: 0, name: 'Traveler', vehicleType: trip?.vehicle || 'car', colorHex: '#f97316' }];
-  }, [storyData, trip?.vehicle]);
+  }, [storyParticipants, trip?.vehicle]);
 
   const storyHighlights = useMemo(() => {
     if (!storyData) return [] as Array<{ waypointId: number }>;
@@ -368,10 +381,16 @@ export default function TripDetailPage() {
             trip={storyData.trip}
             guideId={storyData.guide.id}
             allowShare
-            participants={storyParticipants}
+            participants={participantsForPlayback}
             highlights={storyHighlights}
             soundtrackUrl={storySoundtrack}
             onClose={() => setShowingStory(false)}
+          />
+          <ParticipantPanel
+            tripId={Number(id)}
+            participants={storyParticipants}
+            setParticipants={updateStoryParticipants}
+            defaultVehicle={trip?.vehicle || 'car'}
           />
         </>
       )}

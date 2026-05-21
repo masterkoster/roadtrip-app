@@ -14,6 +14,23 @@ const FUEL_KM_L: Record<string, number> = {
   bike: 0,
 };
 
+const PARTICIPANT_VEHICLES = ['car', 'rv', 'motorcycle', 'bike'] as const;
+
+const normalizeColor = (color: string | null | undefined) => {
+  if (!color) return '#f97316';
+  const hex = color.trim();
+  const match = /^#?[0-9a-fA-F]{6}$/.test(hex) ? hex : '#f97316';
+  return match.startsWith('#') ? match.toLowerCase() : `#${match.toLowerCase()}`;
+};
+
+async function findOwnedTrip(tripId: number, userId: number) {
+  const [trip] = await db.select()
+    .from(schema.trips)
+    .where(and(eq(schema.trips.id, tripId), eq(schema.trips.userId, userId)))
+    .limit(1);
+  return trip;
+}
+
 const FUEL_PRICE_PER_L = parseFloat(process.env.FUEL_PRICE || '1.50');
 
 function estimateFuelCost(distanceKm: number, vehicle: string): number {
@@ -139,15 +156,144 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
 router.delete('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const tripId = parseInt(req.params.id);
-    const [trip] = await db.select()
-      .from(schema.trips)
-      .where(and(eq(schema.trips.id, tripId), eq(schema.trips.userId, req.userId!)))
-      .limit(1);
+    const trip = await findOwnedTrip(tripId, req.userId!);
     if (!trip) return res.status(404).json({ error: 'Trip not found' });
     await db.delete(schema.trips).where(eq(schema.trips.id, tripId));
     return res.json({ message: 'Trip deleted' });
   } catch (err) {
     console.error('Delete trip error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/:id/participants', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const tripId = parseInt(req.params.id);
+    const trip = await findOwnedTrip(tripId, req.userId!);
+    if (!trip) return res.status(404).json({ error: 'Trip not found' });
+
+    const participants = await db.select({
+      id: schema.tripParticipants.id,
+      name: schema.tripParticipants.name,
+      vehicleType: schema.tripParticipants.vehicleType,
+      colorHex: schema.tripParticipants.colorHex,
+    }).from(schema.tripParticipants)
+      .where(eq(schema.tripParticipants.tripId, tripId))
+      .orderBy(schema.tripParticipants.id);
+
+    return res.json(participants);
+  } catch (err) {
+    console.error('Participants fetch error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/participants', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const tripId = parseInt(req.params.id);
+    const trip = await findOwnedTrip(tripId, req.userId!);
+    if (!trip) return res.status(404).json({ error: 'Trip not found' });
+
+    const nameRaw: string | null = req.body?.name ?? null;
+    const name = nameRaw ? nameRaw.trim() : '';
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    const requestedVehicle: string | undefined = req.body?.vehicleType;
+    const vehicleType = PARTICIPANT_VEHICLES.includes(requestedVehicle as any) ? requestedVehicle : 'car';
+    const colorHex = normalizeColor(req.body?.colorHex);
+
+    const [created] = await db.insert(schema.tripParticipants)
+      .values({
+        tripId,
+        name,
+        vehicleType,
+        colorHex,
+      })
+      .returning({
+        id: schema.tripParticipants.id,
+        name: schema.tripParticipants.name,
+        vehicleType: schema.tripParticipants.vehicleType,
+        colorHex: schema.tripParticipants.colorHex,
+      });
+
+    return res.status(201).json(created);
+  } catch (err) {
+    console.error('Participant create error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.put('/:id/participants/:participantId', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const tripId = parseInt(req.params.id);
+    const participantId = parseInt(req.params.participantId);
+    const trip = await findOwnedTrip(tripId, req.userId!);
+    if (!trip) return res.status(404).json({ error: 'Trip not found' });
+
+    const [existing] = await db.select()
+      .from(schema.tripParticipants)
+      .where(and(eq(schema.tripParticipants.id, participantId), eq(schema.tripParticipants.tripId, tripId)))
+      .limit(1);
+    if (!existing) return res.status(404).json({ error: 'Participant not found' });
+
+    const updates: Partial<{ name: string; vehicleType: string; colorHex: string }> = {};
+    if (typeof req.body?.name === 'string') {
+      const name = req.body.name.trim();
+      if (!name) return res.status(400).json({ error: 'Name cannot be empty' });
+      updates.name = name;
+    }
+    if (typeof req.body?.vehicleType === 'string') {
+      updates.vehicleType = PARTICIPANT_VEHICLES.includes(req.body.vehicleType as any) ? req.body.vehicleType : existing.vehicleType;
+    }
+    if (typeof req.body?.colorHex === 'string') {
+      updates.colorHex = normalizeColor(req.body.colorHex);
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.json({
+        id: existing.id,
+        name: existing.name,
+        vehicleType: existing.vehicleType,
+        colorHex: existing.colorHex,
+      });
+    }
+
+    const [updated] = await db.update(schema.tripParticipants)
+      .set(updates)
+      .where(eq(schema.tripParticipants.id, participantId))
+      .returning({
+        id: schema.tripParticipants.id,
+        name: schema.tripParticipants.name,
+        vehicleType: schema.tripParticipants.vehicleType,
+        colorHex: schema.tripParticipants.colorHex,
+      });
+
+    return res.json(updated);
+  } catch (err) {
+    console.error('Participant update error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/:id/participants/:participantId', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const tripId = parseInt(req.params.id);
+    const participantId = parseInt(req.params.participantId);
+    const trip = await findOwnedTrip(tripId, req.userId!);
+    if (!trip) return res.status(404).json({ error: 'Trip not found' });
+
+    const [existing] = await db.select()
+      .from(schema.tripParticipants)
+      .where(and(eq(schema.tripParticipants.id, participantId), eq(schema.tripParticipants.tripId, tripId)))
+      .limit(1);
+    if (!existing) return res.status(404).json({ error: 'Participant not found' });
+
+    await db.delete(schema.tripParticipants)
+      .where(eq(schema.tripParticipants.id, participantId));
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Participant delete error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
