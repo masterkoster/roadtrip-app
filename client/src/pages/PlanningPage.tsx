@@ -74,6 +74,84 @@ export default function PlanningPage() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [costData, setCostData] = useState<CostData | null>(null);
 
+  // Day selection + places
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [dayPlacesCache, setDayPlacesCache] = useState<Map<number, any[]>>(new Map());
+  const [dayPlacesLoading, setDayPlacesLoading] = useState(false);
+  const [flyToBounds, setFlyToBounds] = useState<[number, number][] | null>(null);
+  const [dayItinerary, setDayItinerary] = useState<any>(null);
+
+  const handleDayClick = useCallback((dayIndex: number) => {
+    setSelectedDay(dayIndex);
+    // Zoom map to this day's area
+    if (dayItinerary?.days) {
+      const day = dayItinerary.days.find((d: any) => d.day === dayIndex);
+      if (day) {
+        const dayCoords: [number, number][] = [];
+        day.legs?.forEach((leg: any) => {
+          if (leg.fromId) {
+            const wp = waypoints.find(w => w.id === leg.fromId);
+            if (wp) dayCoords.push([wp.longitude, wp.latitude]);
+          }
+        });
+        const lastLeg = day.legs?.[day.legs.length - 1];
+        if (lastLeg?.toId) {
+          const wp = waypoints.find(w => w.id === lastLeg.toId);
+          if (wp) dayCoords.push([wp.longitude, wp.latitude]);
+        }
+        if (dayCoords.length >= 2) {
+          // Expand bbox by ~200 miles in each direction
+          const lngs = dayCoords.map(c => c[0]);
+          const lats = dayCoords.map(c => c[1]);
+          const pad = 3.0; // ~200 miles at mid-latitudes
+          const expanded: [number, number][] = [
+            [Math.min(...lngs) - pad, Math.min(...lats) - pad],
+            [Math.max(...lngs) + pad, Math.max(...lats) + pad],
+          ];
+          setFlyToBounds(expanded);
+        }
+      }
+    }
+    setTab('itinerary');
+    setPanelOpen(true);
+  }, [dayItinerary, waypoints]);
+
+  // Pre-fetch day places when itinerary data arrives
+  const prefetchDayPlaces = useCallback(async (days: any[]) => {
+    if (!days || days.length === 0) return;
+    setDayPlacesLoading(true);
+    const newCache = new Map(dayPlacesCache);
+    const promises = days.map(async (day: any) => {
+      if (newCache.has(day.day)) return;
+      // Calculate centroid of day's legs
+      let sumLat = 0, sumLng = 0, count = 0;
+      const seen = new Set<number>();
+      day.legs?.forEach((leg: any) => {
+        const fromWp = waypoints.find(w => w.id === leg.fromId);
+        const toWp = waypoints.find(w => w.id === leg.toId);
+        if (fromWp && !seen.has(fromWp.id)) { sumLat += fromWp.latitude; sumLng += fromWp.longitude; count++; seen.add(fromWp.id); }
+        if (toWp && !seen.has(toWp.id)) { sumLat += toWp.latitude; sumLng += toWp.longitude; count++; seen.add(toWp.id); }
+      });
+      if (count === 0) return;
+      const lat = sumLat / count;
+      const lng = sumLng / count;
+      try {
+        const { data } = await api.post(`/trips/${id}/day-places`, { lat, lng, day: day.day });
+        newCache.set(day.day, data.places || []);
+      } catch { /* silent */ }
+    });
+    await Promise.allSettled(promises);
+    setDayPlacesCache(newCache);
+    setDayPlacesLoading(false);
+  }, [id, waypoints, dayPlacesCache]);
+
+  // When itinerary data is set (from estimate-stops), pre-fetch day places
+  useEffect(() => {
+    if (dayItinerary?.days && dayItinerary.days.length > 0) {
+      prefetchDayPlaces(dayItinerary.days);
+    }
+  }, [dayItinerary?.days?.length]);
+
   // POI state
   const [pois, setPois] = useState<Record<string, any[]>>({});
   const [poiCategories, setPoiCategories] = useState<any[]>([]);
@@ -170,6 +248,7 @@ export default function PlanningPage() {
           toId: leg.toId,
           coordinates: leg.geometry || [],
         })).filter((lg: any) => lg.coordinates.length > 0));
+        setDayItinerary(data);
         setCostData({
           fuelCost: data.fuelCost || { total: 0, perLeg: [] },
           accommodationCost: data.accommodationCost || { total: 0, nights: 0, perNight: 0 },
@@ -235,6 +314,7 @@ export default function PlanningPage() {
           interactive={true}
           onMapClick={handleMapClick}
           onRouteWaypointDrop={handleRouteWaypointDrop}
+          flyToBounds={flyToBounds}
         />
       </div>
 
@@ -274,6 +354,64 @@ export default function PlanningPage() {
           </Link>
         </div>
       </div>
+
+      {/* Right panel — day places */}
+      {selectedDay != null && dayPlacesCache.has(selectedDay) && (
+        <div className="absolute top-16 bottom-4 right-4 z-10 w-[300px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col">
+          <div className="flex items-center justify-between p-3 border-b border-gray-100">
+            <h3 className="text-sm font-bold text-gray-900">
+              Day {selectedDay + 1} · Things to do
+              <span className="text-gray-400 font-normal ml-1">{dayPlacesCache.get(selectedDay)?.length || 0}</span>
+            </h3>
+            <button onClick={() => setSelectedDay(null)}
+              className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+            {dayPlacesLoading && !dayPlacesCache.has(selectedDay) ? (
+              <div className="text-center py-6">
+                <div className="w-5 h-5 border-2 border-roadtrip-200 border-t-roadtrip-600 rounded-full animate-spin mx-auto" />
+              </div>
+            ) : (dayPlacesCache.get(selectedDay) || []).map((place: any, idx: number) => (
+              <div key={`${place.source}-${place.pageId}`} className="group flex items-start gap-2.5 p-2 rounded-xl hover:bg-gray-50 transition-colors">
+                {place.thumbnail ? (
+                  <img src={place.thumbnail} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0 mt-0.5" />
+                ) : (
+                  <div className="w-10 h-10 rounded-lg bg-roadtrip-50 text-roadtrip-400 flex items-center justify-center shrink-0 text-lg">
+                    {place.source === 'wikipedia' ? '📖' : '📍'}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-gray-900 truncate">{place.title}</p>
+                  {place.description && <p className="text-[10px] text-gray-500 line-clamp-2 mt-0.5">{place.description}</p>}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[9px] text-gray-400">{place.distance} km</span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded-full ${place.source === 'wikipedia' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                      {place.source}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.post(`/waypoints/trip/${id}`, {
+                        name: place.title.substring(0, 100),
+                        latitude: place.latitude, longitude: place.longitude,
+                        description: place.description?.substring(0, 500) || `From ${place.source}`,
+                      });
+                      toast.success(`Added "${place.title}"`);
+                    } catch { toast.error('Failed to add'); }
+                  }}
+                  className="shrink-0 px-2 py-1 text-[10px] font-medium rounded-lg bg-roadtrip-50 text-roadtrip-700 hover:bg-roadtrip-100 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  + Add
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Left panel */}
       <div className={`absolute top-16 bottom-4 left-4 z-10 w-[340px] bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-200/50 transition-all duration-300 flex flex-col ${panelOpen ? 'translate-x-0' : '-translate-x-[380px]'}`}>
@@ -377,6 +515,7 @@ export default function PlanningPage() {
               tripId={Number(id)}
               waypoints={waypoints}
               onUpdate={loadTrip}
+              onDayClick={handleDayClick}
             />
           )}
         </div>

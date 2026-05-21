@@ -4,7 +4,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { parseGpx } from '../utils/gpx';
 import { matchToRoads, routeBetweenWaypoints } from '../utils/osrm';
-import { findPOIs } from '../utils/poi';
+import { findPOIs, ALL_CATEGORIES } from '../utils/poi';
 
 // Fuel efficiency by vehicle type (km/L)
 const FUEL_KM_L: Record<string, number> = {
@@ -531,6 +531,118 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
   } catch (err) {
     console.error('Estimate stops error:', err);
     return res.status(500).json({ error: 'Failed to estimate stops' });
+  }
+});
+
+// In-memory cache for day places (key: `${tripId}-${day}`)
+const dayPlacesCache = new Map<string, { data: any; ts: number }>();
+const CACHE_TTL = 3600000; // 1 hour
+
+async function fetchWikipediaPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=${Math.round(radiusKm * 1000)}&gscoord=${lat}|${lng}&gslimit=20&format=json&prop=pageimages|description&pithumbsize=150`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data: any = await res.json();
+    const pages = data?.query?.geosearch || [];
+    return pages.map((p: any) => {
+      const thumb = p.thumbnail?.source || null;
+      return {
+        title: p.title,
+        description: p.description || '',
+        pageId: p.pageid,
+        thumbnail: thumb ? (thumb.startsWith('http') ? thumb : `https:${thumb}`) : null,
+        latitude: p.lat,
+        longitude: p.lon,
+        distance: p.dist ? Math.round(p.dist / 1000 * 10) / 10 : 0,
+        source: 'wikipedia',
+      };
+    });
+  } catch { return []; }
+}
+
+const ATTRACTION_CATEGORIES = ['attraction', 'museum', 'park', 'historical', 'viewpoint', 'entertainment', 'beach'];
+
+async function fetchOverpassPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
+  const bbox = `${lat - radiusKm / 111},${lng - radiusKm / (111 * Math.cos(lat * Math.PI / 180))},${lat + radiusKm / 111},${lng + radiusKm / (111 * Math.cos(lat * Math.PI / 180))}`;
+  const query = ATTRACTION_CATEGORIES.map(cat => {
+    switch (cat) {
+      case 'attraction': return `node[tourism~"^(attraction|zoo|aquarium|theme_park)$"](${bbox});`;
+      case 'museum': return `node[tourism="museum"](${bbox});`;
+      case 'park': return `node[leisure~"^(park|nature_reserve|garden)$"](${bbox});node[boundary="national_park"](${bbox});`;
+      case 'historical': return `node[historic](${bbox});`;
+      case 'viewpoint': return `node[tourism="viewpoint"](${bbox});node[natural="peak"](${bbox});`;
+      case 'entertainment': return `node[amenity~"^(cinema|theatre|casino)$"](${bbox});`;
+      case 'beach': return `node[natural="beach"](${bbox});`;
+      default: return '';
+    }
+  }).join('');
+  const overpassQ = `[out:json][timeout:8];(${query});out center 30;`;
+  try {
+    const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQ)}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    const data: any = await res.json();
+    const elements = data?.elements || [];
+    return elements
+      .filter((el: any) => el.tags?.name)
+      .map((el: any) => {
+        const lat2 = el.lat || el.center?.lat || 0;
+        const lng2 = el.lon || el.center?.lon || 0;
+        const dlat = (lat2 - lat) * Math.PI / 180;
+        const dlon = (lng2 - lng) * Math.PI / 180;
+        const a = Math.sin(dlat / 2) ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dlon / 2) ** 2;
+        const dist = Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+        return {
+          title: el.tags.name,
+          description: el.tags.description || el.tags.tourism || el.tags.leisure || el.tags.historic || '',
+          pageId: `osm_${el.id}`,
+          thumbnail: null,
+          latitude: lat2,
+          longitude: lng2,
+          distance: dist,
+          source: 'overpass',
+        };
+      })
+      .filter((p: any) => p.distance <= radiusKm);
+  } catch { return []; }
+}
+
+// Get popular places near a location (Wikipedia + Overpass combined)
+router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { lat, lng, radius, day } = req.body;
+    if (lat == null || lng == null) return res.status(400).json({ error: 'lat and lng required' });
+    const radiusKm = radius || 322; // 200 miles ≈ 322 km
+    const cacheKey = `${req.params.id}-${day ?? 'main'}`;
+    const cached = dayPlacesCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      return res.json({ places: cached.data, source: 'cache' });
+    }
+
+    const [wikiPlaces, overpassPlaces] = await Promise.all([
+      fetchWikipediaPlaces(lat, lng, radiusKm),
+      fetchOverpassPlaces(lat, lng, radiusKm),
+    ]);
+
+    // Merge: keep wikipedia entries first, then add overpass entries that aren't too similar
+    const seenTitles = new Set(wikiPlaces.map((p: any) => p.title.toLowerCase()));
+    const merged = [...wikiPlaces];
+    for (const op of overpassPlaces) {
+      const normalized = op.title.toLowerCase();
+      const isDuplicate = [...seenTitles].some(t => normalized.includes(t) || t.includes(normalized));
+      if (!isDuplicate && seenTitles.size < 40) {
+        seenTitles.add(normalized);
+        merged.push(op);
+      }
+    }
+    merged.sort((a, b) => a.distance - b.distance);
+    const top40 = merged.slice(0, 40);
+
+    dayPlacesCache.set(cacheKey, { data: top40, ts: Date.now() });
+    return res.json({ places: top40, source: 'fresh' });
+  } catch (err) {
+    console.error('Day places error:', err);
+    return res.status(500).json({ error: 'Failed to fetch day places' });
   }
 });
 

@@ -53,6 +53,7 @@ interface ItineraryTimelineProps {
   tripId: number;
   waypoints: Waypoint[];
   onUpdate: () => void;
+  onDayClick?: (dayIndex: number) => void;
 }
 
 function formatDuration(durationMinutes: number | null): string {
@@ -64,7 +65,7 @@ function formatDuration(durationMinutes: number | null): string {
   return `${days}d ${Math.floor(remaining / 60)}h`;
 }
 
-export default function ItineraryTimeline({ tripId, waypoints, onUpdate }: ItineraryTimelineProps) {
+export default function ItineraryTimeline({ tripId, waypoints, onUpdate, onDayClick }: ItineraryTimelineProps) {
   const [data, setData] = useState<EstimateData | null>(null);
   const [loading, setLoading] = useState(false);
   const [autoAssigning, setAutoAssigning] = useState(false);
@@ -180,7 +181,7 @@ export default function ItineraryTimeline({ tripId, waypoints, onUpdate }: Itine
                 <div key={day.day} className={`rounded-xl border transition-all ${day.needsHotel ? 'border-amber-200 bg-amber-50/30' : 'border-gray-100 hover:border-gray-200'}`}>
                   {/* Day header */}
                   <button
-                    onClick={() => setExpandedDay(isExpanded ? null : day.day)}
+                    onClick={() => { setExpandedDay(isExpanded ? null : day.day); onDayClick?.(day.day); }}
                     className="w-full flex items-center justify-between p-3 text-left"
                   >
                     <div className="flex items-center gap-2">

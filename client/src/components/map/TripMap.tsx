@@ -27,12 +27,13 @@ interface TripMapProps {
   tripId?: number;
   legGeometries?: { fromId: number; toId: number; coordinates: [number, number][] }[];
   onRouteWaypointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
+  flyToBounds?: [number, number][] | null;
 }
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
-  routeGeometry, tripId, legGeometries, onRouteWaypointDrop,
+  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, flyToBounds,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -455,6 +456,21 @@ export default function TripMap({
       map.current = null;
     };
   }, [trackPoints, waypoints, photos, animated, interactive, currentStyle, colors, startMarker, endMarker, onMapLoaded, routeGeometry, legGeometries, tripId, onRouteWaypointDrop]);
+
+  // Fly to bounds when prop changes (day click zoom)
+  const prevFlyToRef = useRef<string>('');
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !flyToBounds || flyToBounds.length < 2 || flyToBounds[0].length < 2) return;
+    const key = JSON.stringify(flyToBounds);
+    if (key === prevFlyToRef.current) return;
+    prevFlyToRef.current = key;
+    try {
+      const bounds = new maplibregl.LngLatBounds();
+      flyToBounds.forEach(c => bounds.extend(c as [number, number]));
+      m.fitBounds(bounds, { padding: 80, maxZoom: 9, duration: 1200 });
+    } catch { /* ignore */ }
+  }, [flyToBounds]);
 
   return <div ref={mapContainer} className={`w-full h-full ${className}`} />;
 }
