@@ -28,6 +28,7 @@ interface TripMapProps {
   legGeometries?: { fromId: number; toId: number; coordinates: [number, number][] }[];
   onRouteWaypointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
   onRouteViaPointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
+  onDeleteWaypoint?: (id: number) => void;
   flyToBounds?: [number, number][] | null;
   mapRef?: React.MutableRefObject<any>;
 }
@@ -35,7 +36,7 @@ interface TripMapProps {
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
-  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, onRouteViaPointDrop, flyToBounds, mapRef: mapRefProp,
+  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, onRouteViaPointDrop, onDeleteWaypoint, flyToBounds, mapRef: mapRefProp,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -46,12 +47,14 @@ export default function TripMap({
   const waypointsRef = useRef(waypoints);
   const onRouteWaypointDropRef = useRef(onRouteWaypointDrop);
   const onRouteViaPointDropRef = useRef(onRouteViaPointDrop);
+  const onDeleteWaypointRef = useRef(onDeleteWaypoint);
   const tripIdRef = useRef(tripId);
   const onMapClickRef = useRef(onMapClick);
   legGeometriesRef.current = legGeometries;
   waypointsRef.current = waypoints;
   onRouteWaypointDropRef.current = onRouteWaypointDrop;
   onRouteViaPointDropRef.current = onRouteViaPointDrop;
+  onDeleteWaypointRef.current = onDeleteWaypoint;
   tripIdRef.current = tripId;
   onMapClickRef.current = onMapClick;
 
@@ -216,12 +219,22 @@ export default function TripMap({
     if (!m || !ready) return;
     markersRef.current.forEach(mk => mk.remove());
     markersRef.current = [];
+    // Register global delete bridge
+    (window as any).__deleteWaypoint = (id: number) => {
+      onDeleteWaypointRef.current?.(id);
+    };
     waypoints.forEach((wp, i) => {
       const el = document.createElement('div');
       el.innerHTML = `<div style="width:28px;height:28px;background:${colors.waypoint};border:2px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:700;cursor:pointer;">${i + 1}</div>`;
       const mk = new maplibregl.Marker({ element: el.firstChild as HTMLElement })
         .setLngLat([wp.longitude, wp.latitude])
-        .setPopup(new maplibregl.Popup().setHTML(`<strong style="font-size:13px">${wp.name}</strong>${wp.description ? `<br/><span style="color:#666;font-size:12px">${wp.description}</span>` : ''}`))
+        .setPopup(new maplibregl.Popup().setHTML(
+          '<div style="min-width:140px;font-family:system-ui,sans-serif">' +
+          '<strong style="font-size:13px">' + wp.name + '</strong>' +
+          (wp.description ? '<br/><span style="color:#666;font-size:12px">' + wp.description.substring(0, 80) + '</span>' : '') +
+          (wp.id ? '<br/><button onclick="window.__deleteWaypoint(' + wp.id + ')" style="margin-top:6px;padding:3px 10px;font-size:11px;background:#fee2e2;color:#dc2626;border:none;border-radius:4px;cursor:pointer">Delete</button>' : '') +
+          '</div>'
+        ))
         .addTo(m);
       markersRef.current.push(mk);
     });

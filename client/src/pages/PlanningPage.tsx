@@ -387,6 +387,15 @@ export default function PlanningPage() {
     if (tab === 'find' && trackPoints.length >= 2 && poiCategories.length === 0) fetchPOIs();
   }, [tab, trackPoints?.length]);
 
+  // Delete waypoint
+  const handleDeleteWaypoint = useCallback(async (id: number) => {
+    try {
+      await api.delete(`/waypoints/${id}`);
+      toast.success('Waypoint deleted');
+      loadTrip();
+    } catch { toast.error('Failed to delete'); }
+  }, [loadTrip]);
+
   const addPoiAsWaypoint = async (poi: any) => {
     setAddingPoi(poi.id);
     try {
@@ -422,9 +431,11 @@ export default function PlanningPage() {
           tripId={Number(id)}
           animated={false}
           interactive={true}
+          mapRef={mapRef}
           onMapClick={handleMapClick}
           onRouteWaypointDrop={handleRouteWaypointDrop}
           onRouteViaPointDrop={handleRouteViaPointDrop}
+          onDeleteWaypoint={handleDeleteWaypoint}
           flyToBounds={flyToBounds}
         />
       </div>
@@ -498,9 +509,10 @@ export default function PlanningPage() {
                   {place.description && <p className="text-[10px] text-gray-500 line-clamp-2 mt-0.5">{place.description}</p>}
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[9px] text-gray-400">{place.distance} km</span>
-                    <span className={`text-[9px] px-1 py-0.5 rounded-full ${place.source === 'wikipedia' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                      {place.source}
-                    </span>
+                    {place.source === 'wikipedia' && place.pageId && (
+                      <a href={`https://en.wikipedia.org/?curid=${place.pageId}`} target="_blank" rel="noopener noreferrer"
+                        className="text-[9px] text-roadtrip-600 hover:underline">Wikipedia ↗</a>
+                    )}
                   </div>
                 </div>
                 <button
@@ -590,16 +602,30 @@ export default function PlanningPage() {
                   <p className="text-xs text-gray-400 mt-2">Searching nearby places...</p>
                 </div>
               ) : activePoiCat && pois[activePoiCat] ? (
-                <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
+                <div className="space-y-2 max-h-[500px] overflow-y-auto">
                   {pois[activePoiCat].map((poi: any) => (
-                    <div key={poi.id} className="group flex items-start gap-3 p-2.5 rounded-xl hover:bg-gray-50 transition-colors">
-                      <span className="text-lg shrink-0 mt-0.5">{CAT_ICONS[poi.category] || '📍'}</span>
+                    <div key={poi.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-gray-50 transition-colors border border-gray-100">
+                      {poi.thumbnail ? (
+                        <img src={poi.thumbnail} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0 mt-0.5"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center text-lg shrink-0 mt-0.5">
+                          {CAT_ICONS[poi.category] || '📍'}
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{poi.name}</p>
-                        <p className="text-[11px] text-gray-400 capitalize">{poi.type.replace(/_/g, ' ')} · {poi.distanceKm < 1 ? `${(poi.distanceKm * 1000).toFixed(0)}m` : `${poi.distanceKm.toFixed(1)}km`}</p>
+                        <p className="text-sm font-semibold text-gray-900 truncate">{poi.name}</p>
+                        {poi.description && <p className="text-[11px] text-gray-500 line-clamp-2 mt-0.5">{poi.description}</p>}
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] text-gray-400">{poi.distanceKm < 1 ? `${(poi.distanceKm * 1000).toFixed(0)}m` : `${poi.distanceKm.toFixed(1)}km`}</span>
+                          {poi.pageId && (
+                            <a href={`https://en.wikipedia.org/?curid=${poi.pageId}`} target="_blank" rel="noopener noreferrer"
+                              className="text-[10px] text-roadtrip-600 hover:underline">Wikipedia ↗</a>
+                          )}
+                        </div>
                       </div>
                       <button onClick={() => addPoiAsWaypoint(poi)} disabled={addingPoi === poi.id}
-                        className="shrink-0 px-2.5 py-1 text-[11px] font-medium rounded-lg bg-roadtrip-50 text-roadtrip-700 hover:bg-roadtrip-100 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100">
+                        className="shrink-0 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-roadtrip-600 text-white hover:bg-roadtrip-700 transition-colors disabled:opacity-50">
                         {addingPoi === poi.id ? '...' : '+ Add'}
                       </button>
                     </div>

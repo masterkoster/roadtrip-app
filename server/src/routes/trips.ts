@@ -549,7 +549,7 @@ const CACHE_TTL = 3600000; // 1 hour
 
 async function fetchWikipediaPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
   const radiusMeters = Math.min(Math.round(radiusKm * 1000), 10000); // Wikipedia max radius is 10km
-  const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=${radiusMeters}&gscoord=${lat}|${lng}&gslimit=20&format=json&prop=pageimages|description&pithumbsize=150`;
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=${radiusMeters}&gscoord=${lat}|${lng}&gslimit=50&format=json&prop=pageimages|description|extracts&pithumbsize=300&exintro=1&exlimit=50`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const data: any = await res.json();

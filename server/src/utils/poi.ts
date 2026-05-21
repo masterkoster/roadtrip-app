@@ -6,6 +6,9 @@ export interface POI {
   category: string;
   type: string;
   distanceKm: number;
+  thumbnail?: string | null;
+  description?: string;
+  pageId?: number;
   website?: string;
   phone?: string;
   openingHours?: string;
@@ -108,7 +111,7 @@ export async function findPOIs(
   const centerLat = routePoints.reduce((s, p) => s + p.latitude, 0) / routePoints.length;
   const centerLng = routePoints.reduce((s, p) => s + p.longitude, 0) / routePoints.length;
   try {
-    const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${centerLat}|${centerLng}&gsradius=10000&gslimit=30&format=json`;
+    const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${centerLat}|${centerLng}&gsradius=10000&gslimit=30&format=json&prop=pageimages|description|extracts&pithumbsize=300&exintro=1&exlimit=30`;
     const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
     if (response.ok) {
       const data = await response.json() as any;
@@ -121,6 +124,7 @@ export async function findPOIs(
           if (d < minDist) minDist = d;
         }
         if (minDist > 10) continue;
+        const thumb = p.thumbnail?.source || null;
         items.push({
           id: `wiki_${p.pageid}`,
           name: p.title,
@@ -129,6 +133,9 @@ export async function findPOIs(
           category: 'attraction',
           type: 'wikipedia',
           distanceKm: Math.round(minDist * 100) / 100,
+          thumbnail: thumb ? (thumb.startsWith('http') ? thumb : `https:${thumb}`) : null,
+          description: p.description || p.extract?.substring(0, 200) || '',
+          pageId: p.pageid,
         });
       }
       items.sort((a, b) => a.distanceKm - b.distanceKm);
