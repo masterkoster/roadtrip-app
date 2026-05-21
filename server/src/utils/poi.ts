@@ -1,5 +1,3 @@
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org';
-
 export interface POI {
   id: string;
   name: string;
@@ -15,24 +13,6 @@ export interface POI {
 }
 
 export type POICategory = 'food' | 'fuel' | 'camping' | 'viewpoint' | 'attraction' | 'museum' | 'park' | 'historical' | 'entertainment' | 'shopping' | 'beach' | 'lodging' | 'parking' | 'restroom';
-
-// Map each category to one or more Nominatim search terms
-const CATEGORY_SEARCH_TERMS: Record<POICategory, string[]> = {
-  food: ['restaurant', 'cafe', 'fast food', 'pub'],
-  fuel: ['gas station', 'convenience store'],
-  camping: ['camp site', 'picnic site'],
-  viewpoint: ['scenic viewpoint', 'lookout'],
-  attraction: ['tourist attraction', 'zoo', 'aquarium', 'theme park'],
-  museum: ['museum'],
-  park: ['park', 'national park', 'botanical garden'],
-  historical: ['historic site', 'historic building', 'monument'],
-  entertainment: ['cinema', 'theatre', 'casino', 'night club'],
-  shopping: ['shopping mall', 'market'],
-  beach: ['beach'],
-  lodging: ['hotel', 'motel', 'hostel', 'guest house'],
-  parking: ['parking'],
-  restroom: ['public toilet', 'restroom'],
-};
 
 const CATEGORY_LABELS: Record<POICategory, string> = {
   food: 'Food & Drink',
@@ -124,60 +104,39 @@ export async function findPOIs(
   const bbox = getBbox(routePoints);
   const result: Record<string, POI[]> = {};
 
-  const fetchCategory = async (cat: POICategory): Promise<void> => {
-    const searchTerms = CATEGORY_SEARCH_TERMS[cat];
-    if (!searchTerms || searchTerms.length === 0) return;
-
-    const centerLat = routePoints.reduce((s, p) => s + p.latitude, 0) / routePoints.length;
-    const centerLng = routePoints.reduce((s, p) => s + p.longitude, 0) / routePoints.length;
-    // Use first search term that returns results
-    for (const term of searchTerms) {
-      try {
-        const url = `${NOMINATIM_URL}/search?q=${encodeURIComponent(term)}&format=json&limit=20&bounded=1&viewbox=${bbox.split(',')[1]},${bbox.split(',')[0]},${bbox.split(',')[3]},${bbox.split(',')[2]}`;
-        const response = await fetch(url, {
-          headers: { 'User-Agent': 'roadtrip-app/1.0' },
-          signal: AbortSignal.timeout(6000),
+  // Use Wikipedia Geosearch around the centroid (works reliably)
+  const centerLat = routePoints.reduce((s, p) => s + p.latitude, 0) / routePoints.length;
+  const centerLng = routePoints.reduce((s, p) => s + p.longitude, 0) / routePoints.length;
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${centerLat}|${centerLng}&gsradius=10000&gslimit=30&format=json`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (response.ok) {
+      const data = await response.json() as any;
+      const pages = data?.query?.geosearch || [];
+      const items: POI[] = [];
+      for (const p of pages) {
+        let minDist = Infinity;
+        for (const rp of routePoints) {
+          const d = haversineKm(p.lat, p.lon, rp.latitude, rp.longitude);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist > 10) continue;
+        items.push({
+          id: `wiki_${p.pageid}`,
+          name: p.title,
+          latitude: p.lat,
+          longitude: p.lon,
+          category: 'attraction',
+          type: 'wikipedia',
+          distanceKm: Math.round(minDist * 100) / 100,
         });
-        if (!response.ok) continue;
-        const data = await response.json() as any[];
-        if (!data || data.length === 0) continue;
-
-        const items: POI[] = [];
-        for (const el of data) {
-          const lat = parseFloat(el.lat);
-          const lon = parseFloat(el.lon);
-          if (isNaN(lat) || isNaN(lon)) continue;
-
-          let minDist = Infinity;
-          for (const rp of routePoints) {
-            const d = haversineKm(lat, lon, rp.latitude, rp.longitude);
-            if (d < minDist) minDist = d;
-          }
-          if (minDist > 10) continue;
-
-          const subType = el.type || el.category || 'poi';
-          items.push({
-            id: `nom_${el.osm_type || 'node'}_${el.osm_id || Math.random().toString(36).slice(2)}`,
-            name: el.display_name?.split(',')[0]?.trim() || el.name || term,
-            latitude: lat,
-            longitude: lon,
-            category: cat,
-            type: subType,
-            distanceKm: Math.round(minDist * 100) / 100,
-          });
-        }
-        items.sort((a, b) => a.distanceKm - b.distanceKm);
-        if (items.length > 0) {
-          result[cat] = items.slice(0, 20);
-        }
-        break; // Found results for this category
-      } catch {
-        continue; // Try next search term
+      }
+      items.sort((a, b) => a.distanceKm - b.distanceKm);
+      if (items.length > 0) {
+        result['attraction'] = items.slice(0, 30);
       }
     }
-  };
-
-  await Promise.allSettled(cats.map(fetchCategory));
+  } catch { /* no wiki results */ }
 
   return result;
 }

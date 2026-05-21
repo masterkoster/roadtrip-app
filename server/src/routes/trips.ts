@@ -548,7 +548,8 @@ const dayPlacesCache = new Map<string, { data: any; ts: number }>();
 const CACHE_TTL = 3600000; // 1 hour
 
 async function fetchWikipediaPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
-  const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=${Math.round(radiusKm * 1000)}&gscoord=${lat}|${lng}&gslimit=20&format=json&prop=pageimages|description&pithumbsize=150`;
+  const radiusMeters = Math.min(Math.round(radiusKm * 1000), 10000); // Wikipedia max radius is 10km
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=${radiusMeters}&gscoord=${lat}|${lng}&gslimit=20&format=json&prop=pageimages|description&pithumbsize=150`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const data: any = await res.json();
@@ -569,43 +570,7 @@ async function fetchWikipediaPlaces(lat: number, lng: number, radiusKm: number):
   } catch { return []; }
 }
 
-async function fetchNominatimPlaces(lat: number, lng: number, radiusKm: number): Promise<any[]> {
-  const searchTerms = ['tourist attraction', 'museum', 'park', 'historic site', 'viewpoint', 'cinema', 'beach', 'landmark'];
-  const results: any[] = [];
-  const seen = new Set<string>();
-  for (const term of searchTerms) {
-    try {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(term)}&format=json&limit=10&lat=${lat}&lon=${lng}&radius=${Math.round(radiusKm * 1000)}`;
-      const res = await fetch(url, { headers: { 'User-Agent': 'roadtrip-app/1.0' }, signal: AbortSignal.timeout(5000) });
-      if (!res.ok) continue;
-      const data = await res.json() as any[];
-      for (const el of data) {
-        const plat = parseFloat(el.lat);
-        const plng = parseFloat(el.lon);
-        if (isNaN(plat) || isNaN(plng)) continue;
-        const id = `nom_${el.osm_id || (el.lat + el.lon)}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const dlat = (plat - lat) * Math.PI / 180;
-        const dlng = (plng - lng) * Math.PI / 180;
-        const a = Math.sin(dlat / 2) ** 2 + Math.cos(lat * Math.PI / 180) * Math.cos(plat * Math.PI / 180) * Math.sin(dlng / 2) ** 2;
-        const dist = Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
-        if (dist > radiusKm) continue;
-        results.push({
-          title: el.display_name?.split(',')[0]?.trim() || term,
-          description: el.display_name?.split(',').slice(1, 4).join(',') || '',
-          pageId: id,
-          thumbnail: null,
-          latitude: plat,
-          longitude: plng,
-          distance: dist,
-          source: 'nominatim',
-        });
-      }
-    } catch { continue; }
-  }
-  return results;
-}
+// fetchNominatimPlaces was removed due to rate limiting; day-places now uses Wikipedia only
 
 // Get popular places near a location (Wikipedia + Overpass combined)
 router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Response) => {
@@ -619,22 +584,8 @@ router.post('/:id/day-places', authMiddleware, async (req: AuthRequest, res: Res
       return res.json({ places: cached.data, source: 'cache' });
     }
 
-    const [wikiPlaces, osmPlaces] = await Promise.all([
-      fetchWikipediaPlaces(lat, lng, radiusKm),
-      fetchNominatimPlaces(lat, lng, radiusKm),
-    ]);
-
-    // Merge: keep wikipedia entries first, then add OSM entries that aren't too similar
-    const seenTitles = new Set(wikiPlaces.map((p: any) => p.title.toLowerCase()));
-    const merged = [...wikiPlaces];
-    for (const op of osmPlaces) {
-      const normalized = op.title.toLowerCase();
-      const isDuplicate = [...seenTitles].some(t => normalized.includes(t) || t.includes(normalized));
-      if (!isDuplicate && seenTitles.size < 40) {
-        seenTitles.add(normalized);
-        merged.push(op);
-      }
-    }
+    const wikiPlaces = await fetchWikipediaPlaces(lat, lng, radiusKm);
+    const merged = wikiPlaces.slice(0, 40);
     merged.sort((a, b) => a.distance - b.distance);
     const top40 = merged.slice(0, 40);
 
