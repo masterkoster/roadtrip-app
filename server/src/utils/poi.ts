@@ -64,6 +64,23 @@ export const ALL_CATEGORIES: POICategory[] = [
   'historical', 'entertainment', 'shopping', 'beach', 'lodging', 'parking', 'restroom',
 ];
 
+const CATEGORY_SEARCH_TERMS: Record<string, string> = {
+  food: 'restaurant',
+  fuel: 'gas station',
+  lodging: 'hotel',
+  attraction: 'tourist attraction',
+  museum: 'museum',
+  park: 'park',
+  historical: 'historic site',
+  shopping: 'shopping mall',
+  camping: 'campground',
+  viewpoint: 'scenic overlook',
+  entertainment: 'cinema',
+  beach: 'beach',
+  parking: 'parking',
+  restroom: 'restroom',
+};
+
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
   const dlat = (lat2 - lat1) * Math.PI / 180;
@@ -72,29 +89,45 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function getBbox(points: { latitude: number; longitude: number }[]): string {
-  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
-  for (const p of points) {
-    if (p.latitude < minLat) minLat = p.latitude;
-    if (p.latitude > maxLat) maxLat = p.latitude;
-    if (p.longitude < minLng) minLng = p.longitude;
-    if (p.longitude > maxLng) maxLng = p.longitude;
+function getViewbox(lat: number, lng: number, radiusKm: number): string {
+  const degPerKm = 1 / 111;
+  const d = radiusKm * degPerKm;
+  return `${lng - d},${lat + d},${lng + d},${lat - d}`;
+}
+
+async function fetchNominatimCategory(
+  lat: number, lng: number, radiusKm: number,
+  category: string, searchTerm: string
+): Promise<POI[]> {
+  const viewbox = getViewbox(lat, lng, radiusKm);
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchTerm)}&format=json&limit=20&viewbox=${viewbox}&bounded=1`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'roadtrip-app/1.0' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as any[];
+    return data.map((el: any) => {
+      const plat = parseFloat(el.lat);
+      const plng = parseFloat(el.lon);
+      if (isNaN(plat) || isNaN(plng)) return null;
+      const dist = Math.round(haversineKm(lat, lng, plat, plng) * 100) / 100;
+      return {
+        id: `nom_${el.osm_id || `${el.lat}_${el.lon}`}`,
+        name: el.display_name?.split(',')[0]?.trim() || searchTerm,
+        latitude: plat,
+        longitude: plng,
+        category,
+        type: el.type || 'unknown',
+        distanceKm: dist,
+        description: el.display_name?.split(',').slice(1, 4).join(',').trim() || '',
+        thumbnail: null,
+      };
+    }).filter(Boolean) as POI[];
+  } catch {
+    return [];
   }
-  const pad = 0.05;
-  return `${minLat - pad},${minLng - pad},${maxLat + pad},${maxLng + pad}`;
-}
-
-interface OverpassElement {
-  type: string;
-  id: number;
-  lat?: number;
-  lon?: number;
-  center?: { lat: number; lon: number };
-  tags?: Record<string, string>;
-}
-
-interface OverpassResponse {
-  elements: OverpassElement[];
 }
 
 export async function findPOIs(
@@ -103,47 +136,27 @@ export async function findPOIs(
 ): Promise<Record<string, POI[]>> {
   if (routePoints.length === 0) return {};
 
-  const cats = categories || ALL_CATEGORIES;
-  const bbox = getBbox(routePoints);
-  const result: Record<string, POI[]> = {};
-
-  // Use Wikipedia Geosearch around the centroid (works reliably)
+  const cats = categories || ['food', 'fuel', 'lodging', 'attraction'];
   const centerLat = routePoints.reduce((s, p) => s + p.latitude, 0) / routePoints.length;
   const centerLng = routePoints.reduce((s, p) => s + p.longitude, 0) / routePoints.length;
-  try {
-    const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${centerLat}|${centerLng}&gsradius=10000&gslimit=30&format=json&prop=pageimages|description|extracts&pithumbsize=300&exintro=1&exlimit=30`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
-    if (response.ok) {
-      const data = await response.json() as any;
-      const pages = data?.query?.geosearch || [];
-      const items: POI[] = [];
-      for (const p of pages) {
-        let minDist = Infinity;
-        for (const rp of routePoints) {
-          const d = haversineKm(p.lat, p.lon, rp.latitude, rp.longitude);
-          if (d < minDist) minDist = d;
-        }
-        if (minDist > 10) continue;
-        const thumb = p.thumbnail?.source || null;
-        items.push({
-          id: `wiki_${p.pageid}`,
-          name: p.title,
-          latitude: p.lat,
-          longitude: p.lon,
-          category: 'attraction',
-          type: 'wikipedia',
-          distanceKm: Math.round(minDist * 100) / 100,
-          thumbnail: thumb ? (thumb.startsWith('http') ? thumb : `https:${thumb}`) : null,
-          description: p.description || p.extract?.substring(0, 200) || '',
-          pageId: p.pageid,
-        });
-      }
+  const result: Record<string, POI[]> = {};
+
+  // Run all category searches in parallel with staggered starts to avoid rate limiting
+  const results = await Promise.all(cats.map(async (cat, i) => {
+    const searchTerm = CATEGORY_SEARCH_TERMS[cat];
+    if (!searchTerm) return { cat, items: [] as POI[] };
+    // Stagger starts: 400ms between each to stay under 1 req/s
+    if (i > 0) await new Promise(r => setTimeout(r, 400 * i));
+    const items = await fetchNominatimCategory(centerLat, centerLng, 5, cat, searchTerm);
+    return { cat, items };
+  }));
+
+  for (const { cat, items } of results) {
+    if (items.length > 0) {
       items.sort((a, b) => a.distanceKm - b.distanceKm);
-      if (items.length > 0) {
-        result['attraction'] = items.slice(0, 30);
-      }
+      result[cat] = items.slice(0, 15);
     }
-  } catch { /* no wiki results */ }
+  }
 
   return result;
 }

@@ -356,30 +356,21 @@ export default function PlanningPage() {
     return () => { cancelled = true; };
   }, [id, waypoints.length]);
 
-  // POI fetching — uses same day-places Wikipedia endpoint
+  // POI fetching — uses Nominatim with categories
   const fetchPOIs = async () => {
     if (waypoints.length < 2 && trackPoints.length < 2) { toast.error('Add at least 2 stops first'); return; }
     setPoiLoading(true);
     try {
-      let lat = 0, lng = 0;
+      let params = '';
       if (mapRef.current) {
-        const c = mapRef.current.getCenter();
-        lat = c.lat; lng = c.lng;
-      } else if (waypoints.length > 0) {
-        lat = waypoints[0].latitude; lng = waypoints[0].longitude;
-      } else { setPoiLoading(false); return; }
-      const { data } = await api.post(`/trips/${id}/day-places`, { lat, lng, radius: 10 });
-      const places = data.places || [];
-      if (places.length > 0) {
-        setPois({ attraction: places });
-        setPoiCategories([{ id: 'attraction', label: 'Nearby Places', icon: '📍', count: places.length }]);
-        setActivePoiCat('attraction');
-      } else {
-        setPois({});
-        setPoiCategories([]);
-        setActivePoiCat(null);
+        const b = mapRef.current.getBounds();
+        params = `?south=${b.getSouth()}&west=${b.getWest()}&north=${b.getNorth()}&east=${b.getEast()}`;
       }
-    } catch { /* silent */ }
+      const { data } = await api.get(`/poi/${id}${params}`);
+      setPois(data.pois || {});
+      setPoiCategories(data.categories || []);
+      if (data.categories?.length > 0 && !activePoiCat) setActivePoiCat(data.categories[0].id);
+    } catch (e: any) { console.error('fetchPOIs error:', e?.message || e); }
     setPoiLoading(false);
   };
 
