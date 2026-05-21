@@ -6,6 +6,28 @@ import { parseGpx } from '../utils/gpx';
 import { matchToRoads, routeBetweenWaypoints } from '../utils/osrm';
 import { findPOIs } from '../utils/poi';
 
+// Fuel efficiency by vehicle type (km/L)
+const FUEL_KM_L: Record<string, number> = {
+  car: 10,
+  rv: 4,
+  motorcycle: 15,
+  bike: 0,
+};
+
+const FUEL_PRICE_PER_L = parseFloat(process.env.FUEL_PRICE || '1.50');
+
+function estimateFuelCost(distanceKm: number, vehicle: string): number {
+  const kmPerL = FUEL_KM_L[vehicle] || FUEL_KM_L.car;
+  if (kmPerL <= 0) return 0;
+  return Math.round((distanceKm / kmPerL) * FUEL_PRICE_PER_L * 100) / 100;
+}
+
+function estimateAccommodationCost(nights: number): number {
+  if (nights <= 0) return 0;
+  const perNight = parseFloat(process.env.HOTEL_PRICE || '100');
+  return Math.round(nights * perNight * 100) / 100;
+}
+
 const router = Router();
 
 const toISO = (v: any) => v ? new Date(v).toISOString() : null;
@@ -371,6 +393,7 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
       toName: string;
       distanceKm: number;
       durationHours: number;
+      geometry: number[][];
     }
 
     const legs: LegInfo[] = [];
@@ -384,6 +407,7 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
           toName: wps[i + 1].name,
           distanceKm: Math.round(routeResult.legs[i].distance / 1000 * 10) / 10,
           durationHours: Math.round(routeResult.legs[i].duration / 36) / 100,
+          geometry: routeResult.legs[i].geometry?.coordinates || [],
         });
       }
     } else {
@@ -399,6 +423,7 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
           toName: wps[i].name,
           distanceKm: Math.round(dist * 10) / 10,
           durationHours: Math.round(dist / 80 * 100) / 100,
+          geometry: [],
         });
       }
     }
@@ -486,13 +511,22 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
       });
     }
 
+    const totalDistance = routeResult?.totalDistance ? Math.round(routeResult.totalDistance / 1000 * 10) / 10 : legs.reduce((s, l) => s + l.distanceKm, 0);
+    const totalDrivingHours = routeResult?.totalDuration ? Math.round(routeResult.totalDuration / 36) / 100 : legs.reduce((s, l) => s + l.durationHours, 0);
+    const fuelCost = estimateFuelCost(totalDistance, trip.vehicle);
+    const accommodationCost = estimateAccommodationCost(days.filter(d => d.needsHotel).length);
+
     return res.json({
-      totalDistance: routeResult?.totalDistance ? Math.round(routeResult.totalDistance / 1000 * 10) / 10 : legs.reduce((s, l) => s + l.distanceKm, 0),
-      totalDrivingHours: routeResult?.totalDuration ? Math.round(routeResult.totalDuration / 36) / 100 : legs.reduce((s, l) => s + l.durationHours, 0),
+      totalDistance,
+      totalDrivingHours,
       legCount: legs.length,
       dayCount: days.length,
       days,
       legs,
+      routeGeometry: routeResult?.geometry?.coordinates || [],
+      fuelCost: { total: fuelCost, perLeg: legs.map(l => estimateFuelCost(l.distanceKm, trip.vehicle)) },
+      accommodationCost: { total: accommodationCost, nights: days.filter(d => d.needsHotel).length, perNight: parseFloat(process.env.HOTEL_PRICE || '100') },
+      totalEstimatedCost: Math.round((fuelCost + accommodationCost) * 100) / 100,
     });
   } catch (err) {
     console.error('Estimate stops error:', err);

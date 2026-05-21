@@ -23,11 +23,13 @@ interface TripMapProps {
   onMapLoaded?: () => void;
   onMapClick?: (lngLat: { lat: number; lng: number }) => void;
   mapStyle?: MapStyle;
+  routeGeometry?: [number, number][];
 }
 
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
+  routeGeometry,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -35,12 +37,20 @@ export default function TripMap({
   const [currentStyle] = useState<MapStyle>(mapStyle);
 
   const { startMarker, endMarker } = useMemo(() => {
-    if (trackPoints.length < 2) return { startMarker: null, endMarker: null };
-    return {
-      startMarker: { lat: trackPoints[0].latitude, lng: trackPoints[0].longitude },
-      endMarker: { lat: trackPoints[trackPoints.length - 1].latitude, lng: trackPoints[trackPoints.length - 1].longitude },
-    };
-  }, [trackPoints]);
+    if (routeGeometry && routeGeometry.length >= 2) {
+      return {
+        startMarker: { lat: routeGeometry[0][1], lng: routeGeometry[0][0] },
+        endMarker: { lat: routeGeometry[routeGeometry.length - 1][1], lng: routeGeometry[routeGeometry.length - 1][0] },
+      };
+    }
+    if (trackPoints.length >= 2) {
+      return {
+        startMarker: { lat: trackPoints[0].latitude, lng: trackPoints[0].longitude },
+        endMarker: { lat: trackPoints[trackPoints.length - 1].latitude, lng: trackPoints[trackPoints.length - 1].longitude },
+      };
+    }
+    return { startMarker: null, endMarker: null };
+  }, [trackPoints, routeGeometry]);
 
   // Route colors optimized for dark map
   const colors = useMemo(() => ({
@@ -92,12 +102,15 @@ export default function TripMap({
 
       try { m.dragRotate?.disable(); m.touchZoomRotate?.disableRotation(); } catch {}
 
-      if (trackPoints.length === 0) {
+      const hasRoute = routeGeometry && routeGeometry.length >= 2;
+      if (!hasRoute && trackPoints.length === 0) {
         onMapLoaded?.();
         return;
       }
 
-      const coords: [number, number][] = trackPoints.map(p => [p.longitude, p.latitude]);
+      const coords: [number, number][] = hasRoute
+        ? routeGeometry.map((c: [number, number]) => [c[0], c[1]] as [number, number])
+        : trackPoints.map(p => [p.longitude, p.latitude]);
 
       // Full route source
       m.addSource('route-full', {
@@ -277,7 +290,11 @@ export default function TripMap({
 
         // Fit bounds
         const bounds = new maplibregl.LngLatBounds();
-        trackPoints.forEach(p => bounds.extend([p.longitude, p.latitude]));
+        if (hasRoute) {
+          routeGeometry.forEach((c: [number, number]) => bounds.extend(c));
+        } else {
+          trackPoints.forEach(p => bounds.extend([p.longitude, p.latitude]));
+        }
         m.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 1500 });
 
         onMapLoaded?.();
@@ -295,7 +312,7 @@ export default function TripMap({
       map.current?.remove();
       map.current = null;
     };
-  }, [trackPoints, waypoints, photos, animated, interactive, currentStyle, colors, startMarker, endMarker, onMapLoaded]);
+  }, [trackPoints, waypoints, photos, animated, interactive, currentStyle, colors, startMarker, endMarker, onMapLoaded, routeGeometry]);
 
   return <div ref={mapContainer} className={`w-full h-full ${className}`} />;
 }
