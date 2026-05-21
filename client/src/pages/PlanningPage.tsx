@@ -223,6 +223,31 @@ export default function PlanningPage() {
     toast('Location selected — name your stop');
   }, []);
 
+  // Route via point: add as routing constraint (no reverse geocode, no trip open)
+  const handleRouteViaPointDrop = useCallback(async (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => {
+    try {
+      const { data: newWp } = await api.post(`/waypoints/trip/${id}`, {
+        name: 'Via',
+        latitude: lngLat.lat,
+        longitude: lngLat.lng,
+        description: 'Routing constraint',
+      });
+      // Reorder between the two adjacent waypoints
+      const { data: updated } = await api.get(`/trips/${id}`);
+      const currentWps: Waypoint[] = updated.waypoints || [];
+      const fromIdx = currentWps.findIndex((w: Waypoint) => w.id === between.fromId);
+      const toIdx = currentWps.findIndex((w: Waypoint) => w.id === between.toId);
+      if (fromIdx >= 0 && toIdx >= 0 && newWp?.id) {
+        const others = currentWps.filter((w: Waypoint) => w.id !== newWp.id);
+        const insertAt = Math.min(fromIdx + 1, others.length);
+        others.splice(insertAt, 0, newWp);
+        await api.put(`/waypoints/trip/${id}/reorder`, { waypointIds: others.map((w: Waypoint) => w.id) });
+      }
+      toast.success('Route re-routed through this point');
+      loadTrip();
+    } catch { toast.error('Failed to add routing constraint'); }
+  }, [id, loadTrip]);
+
   const handleRouteWaypointDrop = useCallback(async (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => {
     setTab('stops');
     setPanelOpen(true);
@@ -399,6 +424,7 @@ export default function PlanningPage() {
           interactive={true}
           onMapClick={handleMapClick}
           onRouteWaypointDrop={handleRouteWaypointDrop}
+          onRouteViaPointDrop={handleRouteViaPointDrop}
           flyToBounds={flyToBounds}
         />
       </div>

@@ -27,6 +27,7 @@ interface TripMapProps {
   tripId?: number;
   legGeometries?: { fromId: number; toId: number; coordinates: [number, number][] }[];
   onRouteWaypointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
+  onRouteViaPointDrop?: (lngLat: { lat: number; lng: number }, between: { fromId: number; toId: number }) => void;
   flyToBounds?: [number, number][] | null;
   mapRef?: React.MutableRefObject<any>;
 }
@@ -34,7 +35,7 @@ interface TripMapProps {
 export default function TripMap({
   trackPoints, waypoints = [], photos = [], animated = true,
   className = '', interactive = true, onMapLoaded, onMapClick, mapStyle = 'colorful',
-  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, flyToBounds, mapRef: mapRefProp,
+  routeGeometry, tripId, legGeometries, onRouteWaypointDrop, onRouteViaPointDrop, flyToBounds, mapRef: mapRefProp,
 }: TripMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -44,11 +45,13 @@ export default function TripMap({
   const legGeometriesRef = useRef(legGeometries);
   const waypointsRef = useRef(waypoints);
   const onRouteWaypointDropRef = useRef(onRouteWaypointDrop);
+  const onRouteViaPointDropRef = useRef(onRouteViaPointDrop);
   const tripIdRef = useRef(tripId);
   const onMapClickRef = useRef(onMapClick);
   legGeometriesRef.current = legGeometries;
   waypointsRef.current = waypoints;
   onRouteWaypointDropRef.current = onRouteWaypointDrop;
+  onRouteViaPointDropRef.current = onRouteViaPointDrop;
   tripIdRef.current = tripId;
   onMapClickRef.current = onMapClick;
 
@@ -100,7 +103,13 @@ export default function TripMap({
       onMapLoaded?.();
     });
 
-    // Route line right-click → insert stop here
+    // Route line right-click → show context menu
+    let _clickedLegInfo: { fromId: number; toId: number } | null = null;
+    let _clickedLngLat: { lat: number; lng: number } | null = null;
+    const removeContextMenu = () => {
+      const el = document.getElementById('route-context-menu');
+      if (el) el.remove();
+    };
     m.on('contextmenu', (e) => {
       const lg = legGeometriesRef.current;
       if (lg && lg.length > 0 && m) {
@@ -109,10 +118,32 @@ export default function TripMap({
           e.originalEvent.preventDefault();
           const clicked = findClickedLeg(e.lngLat, lg, waypointsRef.current);
           if (clicked) {
-            onRouteWaypointDropRef.current?.(
-              { lat: e.lngLat.lat, lng: e.lngLat.lng },
-              { fromId: clicked.fromId, toId: clicked.toId }
-            );
+            _clickedLegInfo = { fromId: clicked.fromId, toId: clicked.toId };
+            _clickedLngLat = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+            removeContextMenu();
+            const menu = document.createElement('div');
+            menu.id = 'route-context-menu';
+            menu.style.cssText = 'position:fixed;left:' + e.originalEvent.clientX + 'px;top:' + e.originalEvent.clientY + 'px;z-index:999;background:white;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);padding:4px;min-width:160px;font-family:system-ui,sans-serif;';
+            menu.innerHTML =
+              '<button data-action="route-through" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;border:none;background:none;cursor:pointer;border-radius:6px;color:#374151">' +
+              '<span style="font-weight:500">Route through here</span><br/><span style="font-size:11px;color:#9ca3af">Add routing constraint (no stop)</span></button>' +
+              '<div style="height:1px;background:#f3f4f6;margin:2px 0"></div>' +
+              '<button data-action="add-stop" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;border:none;background:none;cursor:pointer;border-radius:6px;color:#374151">' +
+              '<span style="font-weight:500">Add as stop</span><br/><span style="font-size:11px;color:#9ca3af">Create waypoint with name</span></button>';
+            menu.addEventListener('click', (ev) => {
+              const btn = (ev.target as HTMLElement).closest('button');
+              if (!btn || !_clickedLegInfo || !_clickedLngLat) { menu.remove(); return; }
+              const action = btn.dataset.action;
+              if (action === 'route-through') {
+                onRouteViaPointDropRef.current?.(_clickedLngLat, _clickedLegInfo);
+              } else if (action === 'add-stop') {
+                onRouteWaypointDropRef.current?.(_clickedLngLat, _clickedLegInfo);
+              }
+              menu.remove();
+            });
+            document.body.appendChild(menu);
+            // Close on any click outside
+            document.addEventListener('click', () => removeContextMenu(), { once: true });
           }
         }
       }
