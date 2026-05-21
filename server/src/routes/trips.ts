@@ -428,7 +428,7 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
       }
     }
 
-    // Build day-by-day itinerary
+    // Build day-by-day itinerary (without hotel search — done async after)
     interface DayInfo {
       day: number;
       legs: LegInfo[];
@@ -451,21 +451,6 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
       const stopDurationHours = (wps[i].duration || 0) / 60;
 
       if (dailyDrivingHours + leg.durationHours > maxDailyHours || dailyDistanceKm + leg.distanceKm > maxDailyKm) {
-        // Finalize current day
-        const lastWaypoint = wps[i];
-        let hotels: { name: string; latitude: number; longitude: number; distanceKm: number; type: string }[] = [];
-        try {
-          const poiResult = await findPOIs([{ latitude: lastWaypoint.latitude, longitude: lastWaypoint.longitude }], ['lodging', 'camping']);
-          const allAccom = [...(poiResult.lodging || []), ...(poiResult.camping || [])];
-          hotels = allAccom.slice(0, 5).map(p => ({
-            name: p.name,
-            latitude: p.latitude,
-            longitude: p.longitude,
-            distanceKm: Math.round(p.distanceKm * 10) / 10,
-            type: p.type,
-          }));
-        } catch { /* no hotels found */ }
-
         days.push({
           day: currentDay,
           legs: [...dayLegs],
@@ -477,7 +462,7 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
             durationMinutes: w.duration || 0,
           })),
           needsHotel: true,
-          suggestedHotels: hotels,
+          suggestedHotels: [],
         });
 
         currentDay++;
@@ -510,6 +495,30 @@ router.post('/:id/estimate-stops', authMiddleware, async (req: AuthRequest, res:
         suggestedHotels: [],
       });
     }
+
+    // Hotel search — fire in parallel, non-blocking; if Overpass is slow, days just have empty hotels
+    const hotelPromises = days
+      .filter(d => d.needsHotel && d.legs.length > 0)
+      .map(async (day) => {
+        const lastLeg = day.legs[day.legs.length - 1];
+        const lastWp = wps.find(w => w.id === lastLeg.toId);
+        if (!lastWp) return;
+        try {
+          const poiResult = await findPOIs(
+            [{ latitude: lastWp.latitude, longitude: lastWp.longitude }],
+            ['lodging', 'camping']
+          );
+          const allAccom = [...(poiResult.lodging || []), ...(poiResult.camping || [])];
+          day.suggestedHotels = allAccom.slice(0, 5).map(p => ({
+            name: p.name,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            distanceKm: Math.round(p.distanceKm * 10) / 10,
+            type: p.type,
+          }));
+        } catch { /* no hotels */ }
+      });
+    await Promise.allSettled(hotelPromises);
 
     const totalDistance = routeResult?.totalDistance ? Math.round(routeResult.totalDistance / 1000 * 10) / 10 : legs.reduce((s, l) => s + l.distanceKm, 0);
     const totalDrivingHours = routeResult?.totalDuration ? Math.round(routeResult.totalDuration / 36) / 100 : legs.reduce((s, l) => s + l.durationHours, 0);

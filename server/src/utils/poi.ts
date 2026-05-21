@@ -123,20 +123,20 @@ export async function findPOIs(
   const bbox = getBbox(routePoints);
   const result: Record<string, POI[]> = {};
 
-  for (const cat of cats) {
+  const fetchCategory = async (cat: POICategory): Promise<void> => {
     const query = CATEGORY_QUERIES[cat];
-    if (!query) continue;
+    if (!query) return;
 
-    const overpassQuery = `[out:json][timeout:10];(${query.replace(/{{bbox}}/g, bbox)});out center 50;`;
+    const overpassQuery = `[out:json][timeout:6];(${query.replace(/{{bbox}}/g, bbox)});out center 30;`;
     const encodedQuery = encodeURIComponent(overpassQuery);
 
     try {
       const response = await fetch(`${OVERPASS_URL}?data=${encodedQuery}`, {
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(8000),
       });
 
-      if (!response.ok) continue;
+      if (!response.ok) return;
 
       const data = (await response.json()) as OverpassResponse;
       const items: POI[] = [];
@@ -179,9 +179,11 @@ export async function findPOIs(
         result[cat] = items.slice(0, 30);
       }
     } catch {
-      continue;
+      // timeout or error — skip
     }
-  }
+  };
+
+  await Promise.allSettled(cats.map(fetchCategory));
 
   return result;
 }

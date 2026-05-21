@@ -16,13 +16,23 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
       .limit(1);
     if (!trip) return res.status(404).json({ error: 'Trip not found' });
 
-    const points = await db.select()
+    const trackPts = await db.select()
       .from(schema.trackPoints)
       .where(eq(schema.trackPoints.tripId, tripId))
       .orderBy(schema.trackPoints.timestamp);
 
-    if (points.length < 2) {
-      return res.json({ pois: {}, categories: [] });
+    // Fall back to waypoints if no track points
+    let routePoints: { latitude: number; longitude: number }[] = trackPts;
+    if (routePoints.length < 2) {
+      const wps = await db.select()
+        .from(schema.waypoints)
+        .where(eq(schema.waypoints.tripId, tripId))
+        .orderBy(schema.waypoints.orderIndex);
+      if (wps.length >= 2) {
+        routePoints = wps;
+      } else {
+        return res.json({ pois: {}, categories: [] });
+      }
     }
 
     const categoriesParam = req.query.categories as string;
@@ -30,7 +40,7 @@ router.get('/:tripId', authMiddleware, async (req: AuthRequest, res: Response) =
       ? (categoriesParam.split(',').filter(c => ALL_CATEGORIES.includes(c as POICategory)) as POICategory[])
       : undefined;
 
-    const pois = await findPOIs(points, categories);
+    const pois = await findPOIs(routePoints, categories);
 
     const categoryMeta = Object.keys(pois).map(cat => ({
       id: cat,
