@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import TripMap from '../components/map/TripMap';
@@ -77,6 +77,8 @@ export default function PlanningPage() {
   // Day selection + places
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [dayPlacesCache, setDayPlacesCache] = useState<Map<number, any[]>>(new Map());
+  const cacheRef = useRef(dayPlacesCache);
+  cacheRef.current = dayPlacesCache;
   const [dayPlacesLoading, setDayPlacesLoading] = useState(false);
   const [flyToBounds, setFlyToBounds] = useState<[number, number][] | null>(null);
   const [dayItinerary, setDayItinerary] = useState<any>(null);
@@ -139,19 +141,17 @@ export default function PlanningPage() {
     setTab('itinerary');
     setPanelOpen(true);
     // On-demand fetch if not cached yet
-    setDayPlacesCache(prev => {
-      if (prev.has(dayIndex)) return prev;
+    if (!cacheRef.current.has(dayIndex)) {
       setDayPlacesLoading(true);
       fetchDayPlaces(dayIndex).then(places => {
-        setDayPlacesCache(prev2 => {
-          const next = new Map(prev2);
+        setDayPlacesCache(prev => {
+          const next = new Map(prev);
           next.set(dayIndex, places);
           return next;
         });
         setDayPlacesLoading(false);
       });
-      return prev;
-    });
+    }
   }, [dayItinerary, waypoints, fetchDayPlaces]);
 
   // Pre-fetch day places when itinerary data arrives
