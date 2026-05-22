@@ -221,7 +221,7 @@ const createVehicleAvatar = (vehicleType: string, colorHex: string, index: numbe
   beacon.position.set(-0.28, 0.32, 0);
   group.add(beacon);
 
-  const scale = 0.85 + Math.min(index, 4) * 0.05;
+  const scale = 3.5 + Math.min(index, 4) * 0.2;
   group.scale.setScalar(scale);
   group.rotation.z = Math.PI / 2;
 
@@ -378,6 +378,10 @@ export default function AnimatedJourneyPlayer({
   const highlightTexturesRef = useRef<Record<number, THREE.Texture>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [popup, setPopup] = useState<{ waypoint: Waypoint; meta: LandmarkPopupMeta } | null>(null);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const [speed, setSpeed] = useState(1);
+  const speedRef = useRef(1);
   const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastHighlightRef = useRef<number | null>(null);
   const approachStartRef = useRef<number | null>(null);
@@ -399,29 +403,24 @@ export default function AnimatedJourneyPlayer({
 
   useEffect(() => {
     setProgress(0);
+    setPaused(false);
+    pausedRef.current = false;
+    setSpeed(1);
+    speedRef.current = 1;
     pausedTotalRef.current = 0;
     pauseUntilRef.current = null;
     pauseStartRef.current = null;
     startRef.current = null;
-    phaseRef.current = 'overview';
+    phaseRef.current = 'journey';
     approachStartRef.current = null;
     approachFromRef.current = null;
-    setIntroStage(routeVectors.length > 1 ? 'orbit' : 'hidden');
+    setIntroStage('hidden');
   }, [pathPoints.length, highlights.length, routeVectors.length]);
 
   useEffect(() => {
     if (routeVectors.length < 2) {
-      phaseRef.current = 'journey';
-      setIntroStage('hidden');
       return;
     }
-    const timer = setTimeout(() => {
-      phaseRef.current = 'approach';
-      approachStartRef.current = null;
-      approachFromRef.current = null;
-      setIntroStage('approach');
-    }, 2600);
-    return () => clearTimeout(timer);
   }, [routeVectors.length]);
 
   useEffect(() => {
@@ -727,6 +726,12 @@ export default function AnimatedJourneyPlayer({
         progressLoopRef.current = requestAnimationFrame(step);
         return;
       }
+      if (pausedRef.current) {
+        startRef.current = null;
+        pausedTotalRef.current = 0;
+        progressLoopRef.current = requestAnimationFrame(step);
+        return;
+      }
       if (!startRef.current) startRef.current = timestamp;
       if (pauseUntilRef.current && timestamp < pauseUntilRef.current) {
         progressLoopRef.current = requestAnimationFrame(step);
@@ -739,7 +744,7 @@ export default function AnimatedJourneyPlayer({
         pauseUntilRef.current = null;
         pauseStartRef.current = null;
       }
-      const elapsed = timestamp - (startRef.current ?? timestamp) - pausedTotalRef.current;
+      const elapsed = (timestamp - (startRef.current ?? timestamp) - pausedTotalRef.current) * speedRef.current;
       const pct = Math.min(elapsed / duration, 1);
       setProgress(pct);
       if (pct < 1) {
@@ -940,7 +945,7 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
         )}
       </div>
       {currentWaypoint && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-xl bg-white/95 text-gray-800 rounded-2xl shadow-xl border border-amber-100 overflow-hidden" style={{ fontFamily: 'system-ui, sans-serif' }}>
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 w-full max-w-xl bg-white/95 text-gray-800 rounded-2xl shadow-xl border border-amber-100 overflow-hidden" style={{ fontFamily: 'system-ui, sans-serif' }}>
           <div className="px-5 pt-4 pb-3">
             <div className="text-[11px] uppercase tracking-[0.3em] text-amber-600/60 mb-1">Stop</div>
             <h2 className="text-xl font-bold text-gray-900">{currentWaypoint.name}</h2>
@@ -965,14 +970,35 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
           )}
         </div>
       )}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl" style={{ fontFamily: 'system-ui, sans-serif' }}>
-        <div className="text-[10px] uppercase tracking-[0.2em] text-white/60">Progress</div>
-        <div className="w-48 h-[6px] bg-white/20 rounded-full overflow-hidden">
-          <div className="h-full bg-amber-400" style={{ width: `${progress * 100}%` }} />
-        </div>
-        <button onClick={onClose} className="px-3 py-1 text-xs font-semibold uppercase tracking-wide bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors">
-          Close
+      <div className="absolute bottom-0 left-0 right-0 z-50 bg-white border-t border-amber-200/30 px-4 py-3 flex items-center justify-center gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.08)]">
+        <button onClick={onClose}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors">
+          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
+
+        <div className="w-0.5 h-6 bg-gray-200 rounded-full" />
+
+        <button onClick={() => { setPaused(p => { const v = !v; pausedRef.current = v; return v; }); }}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-amber-100 hover:bg-amber-200 transition-colors">
+          {paused ? (
+            <svg className="w-4 h-4 text-amber-700 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg>
+          ) : (
+            <svg className="w-4 h-4 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6" /></svg>
+          )}
+        </button>
+
+        <button onClick={() => setSpeed(s => { const v = s === 4 ? 1 : s === 1 ? 2 : 4; speedRef.current = v; return v; })}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-colors ${speed > 1 ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+          {speed}x
+        </button>
+
+        <div className="w-0.5 h-6 bg-gray-200 rounded-full" />
+
+        <div className="text-[10px] uppercase tracking-[0.2em] text-gray-400" style={{ fontFamily: 'system-ui, sans-serif' }}>Progress</div>
+        <div className="w-48 h-[6px] bg-gray-200 rounded-full overflow-hidden">
+          <div className="h-full bg-amber-400 transition-all duration-300" style={{ width: `${progress * 100}%` }} />
+        </div>
+        <span className="text-[11px] font-medium text-gray-500 w-8 text-right">{Math.round(progress * 100)}%</span>
       </div>
     </div>
   );

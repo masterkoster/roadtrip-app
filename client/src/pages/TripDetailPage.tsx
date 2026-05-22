@@ -1,13 +1,11 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import TripMap from '../components/map/TripMap';
 import ElevationProfile from '../components/trip/ElevationProfile';
 import PhotoGallery from '../components/trip/PhotoGallery';
-import StoryPlayer from '../components/trip/StoryPlayer';
 import { VehicleBadge } from '../components/trip/VehicleIcon';
 import toast from 'react-hot-toast';
-import ParticipantPanel from '../components/trip/ParticipantPanel';
 
 interface TrackPoint { id: number; latitude: number; longitude: number; elevation: number | null; timestamp: string | null; }
 interface Waypoint { id: number; name: string; description: string | null; latitude: number; longitude: number; orderIndex: number; duration: number | null; dayIndex: number | null; }
@@ -54,24 +52,7 @@ export default function TripDetailPage() {
   const [mapLoaded, setMapLoaded] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
 
-  const [storyData, setStoryData] = useState<{
-    guide: Guide;
-    segments: StorySegment[];
-    waypoints: Waypoint[];
-    photos: Photo[];
-    trackPoints: TrackPoint[];
-    trip: any;
-    participants?: Array<{ id: number; name: string; vehicleType: string; colorHex: string }>;
-    settings?: {
-      defaultMode?: 'storybook' | 'animated';
-      highlights?: Array<{ waypointId: number }>;
-      soundtrackUrl?: string | null;
-    };
-  } | null>(null);
-  const [showingStory, setShowingStory] = useState(false);
-  const [loadingStory, setLoadingStory] = useState(false);
-  const [storyMode, setStoryMode] = useState<'storybook' | 'animated'>('storybook');
-  const [storyParticipants, setStoryParticipants] = useState<StoryParticipant[]>([]);
+  const [mapStyle, setMapStyle] = useState<'colorful' | 'light' | 'dark'>('colorful');
 
   useEffect(() => {
     api.get(`/trips/${id}`).then(({ data }) => {
@@ -83,6 +64,12 @@ export default function TripDetailPage() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
 
+  const deleteTrip = async () => {
+    if (!confirm('Delete this trip permanently?')) return;
+    try { await api.delete(`/trips/${id}`); toast.success('Trip deleted'); navigate('/'); }
+    catch { toast.error('Failed to delete'); }
+  };
+
   const stats = useMemo(() => {
     if (!trip) return null;
     return [
@@ -92,52 +79,6 @@ export default function TripDetailPage() {
       { label: 'Points', value: trackPoints.length.toLocaleString(), icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z' },
     ];
   }, [trip, trackPoints]);
-
-  const [mapStyle, setMapStyle] = useState<'colorful' | 'light' | 'dark'>('colorful');
-
-  const deleteTrip = async () => {
-    if (!confirm('Delete this trip permanently?')) return;
-    try { await api.delete(`/trips/${id}`); toast.success('Trip deleted'); navigate('/'); }
-    catch { toast.error('Failed to delete'); }
-  };
-
-  const loadStory = async () => {
-    setLoadingStory(true);
-    try {
-      const { data } = await api.get(`/stories/${id}`);
-      setStoryData(data);
-      setStoryMode((data.settings?.defaultMode as 'storybook' | 'animated') || 'storybook');
-      setStoryParticipants(data.participants && data.participants.length > 0 ? data.participants : []);
-      setShowingStory(true);
-    } catch (err: any) {
-      if (err.response?.status === 404) toast.error('No guide found for this trip');
-      else toast.error('Failed to load story');
-    }
-    setLoadingStory(false);
-  };
-
-  const updateStoryParticipants = useCallback<React.Dispatch<React.SetStateAction<StoryParticipant[]>>>((updater) => {
-    setStoryParticipants(prev => {
-      const next = typeof updater === 'function'
-        ? (updater as (prev: StoryParticipant[]) => StoryParticipant[])(prev)
-        : updater;
-      setStoryData(current => current ? { ...current, participants: next } : current);
-      return next;
-    });
-  }, []);
-
-  const participantsForPlayback = useMemo(() => {
-    if (storyParticipants.length > 0) return storyParticipants;
-    return [{ id: 0, name: 'Traveler', vehicleType: trip?.vehicle || 'car', colorHex: '#f97316' }];
-  }, [storyParticipants, trip?.vehicle]);
-
-  const storyHighlights = useMemo(() => {
-    if (!storyData) return [] as Array<{ waypointId: number }>;
-    return (storyData.settings?.highlights || [])
-      .filter((h: { waypointId: number }) => storyData.waypoints.some(w => w.id === h.waypointId));
-  }, [storyData]);
-
-  const storySoundtrack = storyData?.settings?.soundtrackUrl || undefined;
 
   if (loading) return (
     <div className="flex items-center justify-center py-24">
@@ -180,11 +121,18 @@ export default function TripDetailPage() {
                 Plan This Trip
               </Link>
               {guides.length > 0 && (
-                <button onClick={loadStory} disabled={loadingStory}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium text-sm backdrop-blur-sm transition-colors border border-white/20 disabled:opacity-50">
+                <Link to={`/trips/${id}/storybook`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium text-sm backdrop-blur-sm transition-colors border border-white/20">
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                  {loadingStory ? 'Loading...' : 'Play Story'}
-                </button>
+                  Storybook
+                </Link>
+              )}
+              {guides.length > 0 && (
+                <Link to={`/trips/${id}/animated`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium text-sm backdrop-blur-sm transition-colors border border-white/20">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg>
+                  Animated
+                </Link>
               )}
               {/* Map style toggle */}
               <div className="relative group">
@@ -355,45 +303,6 @@ export default function TripDetailPage() {
           </div>
         </div>
       </div>
-
-      {/* Story Player Overlay */}
-      {showingStory && storyData && (
-        <>
-          <div className="absolute top-6 right-6 z-[60] flex items-center gap-2 bg-black/40 text-white px-3 py-1.5 rounded-xl text-xs uppercase tracking-[0.2em]">
-            <span className="text-white/60">View</span>
-            <button
-              className={`px-2 py-1 rounded-lg transition-colors ${storyMode === 'storybook' ? 'bg-amber-500 text-white' : 'text-white/70 hover:text-white'}`}
-              onClick={() => setStoryMode('storybook')}
-            >Storybook</button>
-            <button
-              className={`px-2 py-1 rounded-lg transition-colors ${storyMode === 'animated' ? 'bg-amber-500 text-white' : 'text-white/70 hover:text-white'}`}
-              onClick={() => setStoryMode('animated')}
-            >Animated</button>
-          </div>
-          <StoryPlayer
-            mode={storyMode}
-            tripId={Number(id)}
-            segments={storyData.segments}
-            waypoints={storyData.waypoints}
-            photos={storyData.photos}
-            trackPoints={storyData.trackPoints}
-            vehicle={(trip?.vehicle as any) || 'car'}
-            trip={storyData.trip}
-            guideId={storyData.guide.id}
-            allowShare
-            participants={participantsForPlayback}
-            highlights={storyHighlights}
-            soundtrackUrl={storySoundtrack}
-            onClose={() => setShowingStory(false)}
-          />
-          <ParticipantPanel
-            tripId={Number(id)}
-            participants={storyParticipants}
-            setParticipants={updateStoryParticipants}
-            defaultVehicle={trip?.vehicle || 'car'}
-          />
-        </>
-      )}
     </div>
   );
 }
