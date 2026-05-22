@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 
 interface TrackPoint {
@@ -456,23 +456,32 @@ export default function AnimatedJourneyPlayer({
 
     const textureLoader = new THREE.TextureLoader();
     textureLoader.setCrossOrigin('anonymous');
-    const earthTexture = textureLoader.load(EARTH_TEXTURE_URL);
-    earthTexture.colorSpace = THREE.SRGBColorSpace;
-    const earthBump = textureLoader.load(EARTH_BUMP_URL);
-    const earthSpec = textureLoader.load(EARTH_SPEC_URL);
 
     const globeGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
     const globeMaterial = new THREE.MeshPhongMaterial({
-      map: earthTexture,
-      bumpMap: earthBump,
-      bumpScale: 0.15,
-      specularMap: earthSpec,
+      color: 0x2288cc,
+      emissive: 0x0a1a2e,
+      emissiveIntensity: 0.15,
       specular: new THREE.Color(0x333333),
-      shininess: 12,
+      shininess: 8,
     });
     const globe = new THREE.Mesh(globeGeometry, globeMaterial);
     scene.add(globe);
     globeRef.current = globe;
+
+    textureLoader.load(EARTH_TEXTURE_URL, (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      globeMaterial.map = tex;
+      globeMaterial.needsUpdate = true;
+    });
+    textureLoader.load(EARTH_BUMP_URL, (tex) => {
+      globeMaterial.bumpMap = tex;
+      globeMaterial.needsUpdate = true;
+    });
+    textureLoader.load(EARTH_SPEC_URL, (tex) => {
+      globeMaterial.specularMap = tex;
+      globeMaterial.needsUpdate = true;
+    });
 
     const starGeometry = new THREE.BufferGeometry();
     const starVertices = new Float32Array(1500 * 3);
@@ -791,6 +800,34 @@ export default function AnimatedJourneyPlayer({
     return nearest;
   }, [progress, pathPoints, waypoints]);
 
+  const waypointProgresses = useMemo(() => {
+    if (!pathPoints.length || !waypoints.length) return [] as number[];
+    return waypoints.map(wp => {
+      let bestIdx = 0;
+      let bestDist = Number.MAX_VALUE;
+      pathPoints.forEach((pt, idx) => {
+        const dlat = pt.latitude - wp.latitude;
+        const dlng = pt.longitude - wp.longitude;
+        const dist = dlat * dlat + dlng * dlng;
+        if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
+      });
+      return pathPoints.length > 1 ? bestIdx / (pathPoints.length - 1) : 0;
+    });
+  }, [pathPoints, waypoints]);
+
+  const skipToWaypoint = useCallback((dir: 1 | -1) => {
+    if (!waypointProgresses.length) return;
+    const current = progress;
+    const sorted = dir === 1
+      ? waypointProgresses.filter(p => p > current + 0.01)
+      : [...waypointProgresses].reverse().filter(p => p < current - 0.01);
+    const target = sorted.length > 0 ? sorted[0] : (dir === 1 ? 1 : 0);
+    setProgress(target);
+    if (startRef.current != null) {
+      startRef.current = performance.now() - (target * (Math.max(15000, (routeVectors.length || 1) * 450) / speedRef.current));
+    }
+  }, [progress, waypointProgresses, routeVectors.length]);
+
   const waypointPhotos = useMemo(() => {
     if (!currentWaypoint) return [] as Photo[];
     return photos.filter(p => {
@@ -972,11 +1009,21 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
       )}
       <div className="absolute bottom-0 left-0 right-0 z-50 bg-white border-t border-amber-200/30 px-4 py-3 flex items-center justify-center gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.08)]">
         <button onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors">
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors" title="Close">
           <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
 
         <div className="w-0.5 h-6 bg-gray-200 rounded-full" />
+
+        <button onClick={() => skipToWaypoint(-1)}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 disabled:opacity-30 transition-colors" title="Previous stop">
+          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+        </button>
+
+        <button onClick={() => skipToWaypoint(1)}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 disabled:opacity-30 transition-colors" title="Next stop">
+          <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+        </button>
 
         <button onClick={() => { setPaused(p => { const v = !v; pausedRef.current = v; return v; }); }}
           className="w-9 h-9 flex items-center justify-center rounded-full bg-amber-100 hover:bg-amber-200 transition-colors">
@@ -995,7 +1042,15 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
         <div className="w-0.5 h-6 bg-gray-200 rounded-full" />
 
         <div className="text-[10px] uppercase tracking-[0.2em] text-gray-400" style={{ fontFamily: 'system-ui, sans-serif' }}>Progress</div>
-        <div className="w-48 h-[6px] bg-gray-200 rounded-full overflow-hidden">
+        <div className="w-48 h-[6px] bg-gray-200 rounded-full overflow-hidden cursor-pointer"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            setProgress(pct);
+            if (startRef.current != null) {
+              startRef.current = performance.now() - (pct * (Math.max(15000, (routeVectors.length || 1) * 450) / speedRef.current));
+            }
+          }}>
           <div className="h-full bg-amber-400 transition-all duration-300" style={{ width: `${progress * 100}%` }} />
         </div>
         <span className="text-[11px] font-medium text-gray-500 w-8 text-right">{Math.round(progress * 100)}%</span>
