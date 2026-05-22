@@ -423,232 +423,209 @@ export default function AnimatedJourneyPlayer({
     }
   }, [routeVectors.length]);
 
+  const [initError, setInitError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!containerRef.current || rendererRef.current) return;
+    setInitError(null);
 
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    try {
+      const width = containerRef.current.clientWidth;
+      const height = containerRef.current.clientHeight;
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x040a1a);
-    sceneRef.current = scene;
-
-    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 2000);
-    camera.position.set(0, EARTH_RADIUS * 0.75, EARTH_RADIUS * 2.2);
-    camera.lookAt(0, 0, 0);
-    cameraRef.current = camera;
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(width, height);
-    renderer.setClearColor(0x040a1a, 1);
-    containerRef.current.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
-
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambient);
-    const keyLight = new THREE.DirectionalLight(0xffffff, 0.95);
-    keyLight.position.set(5, 8, 4);
-    scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0x89b4ff, 0.3);
-    fillLight.position.set(-6, -4, -2);
-    scene.add(fillLight);
-
-    const textureLoader = new THREE.TextureLoader();
-    textureLoader.setCrossOrigin('anonymous');
-
-    const globeGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
-    const globeMaterial = new THREE.MeshPhongMaterial({
-      color: 0x2288cc,
-      emissive: 0x0a1a2e,
-      emissiveIntensity: 0.15,
-      specular: new THREE.Color(0x333333),
-      shininess: 8,
-    });
-    const globe = new THREE.Mesh(globeGeometry, globeMaterial);
-    scene.add(globe);
-    globeRef.current = globe;
-
-    textureLoader.load(EARTH_TEXTURE_URL, (tex) => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      globeMaterial.map = tex;
-      globeMaterial.needsUpdate = true;
-    });
-    textureLoader.load(EARTH_BUMP_URL, (tex) => {
-      globeMaterial.bumpMap = tex;
-      globeMaterial.needsUpdate = true;
-    });
-    textureLoader.load(EARTH_SPEC_URL, (tex) => {
-      globeMaterial.specularMap = tex;
-      globeMaterial.needsUpdate = true;
-    });
-
-    const starGeometry = new THREE.BufferGeometry();
-    const starVertices = new Float32Array(1500 * 3);
-    for (let i = 0; i < 1500; i++) {
-      const radius = 80 + Math.random() * 40;
-      const theta = Math.random() * 2 * Math.PI;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const x = radius * Math.sin(phi) * Math.cos(theta);
-      const y = radius * Math.sin(phi) * Math.sin(theta);
-      const z = radius * Math.cos(phi);
-      starVertices[i * 3] = x;
-      starVertices[i * 3 + 1] = y;
-      starVertices[i * 3 + 2] = z;
-    }
-    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
-    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.45, transparent: true, opacity: 0.65 });
-    const stars = new THREE.Points(starGeometry, starMaterial);
-    scene.add(stars);
-
-    if (routeVectors.length > 1) {
-      const routeGeometry = new THREE.BufferGeometry().setFromPoints(routeVectors);
-      const routeMaterial = new THREE.LineBasicMaterial({ color: 0xffd95a, transparent: true, opacity: 0.9, linewidth: 4 });
-      const routeLine = new THREE.Line(routeGeometry, routeMaterial);
-      scene.add(routeLine);
-    }
-
-    participantMeshes.current = participants.map((p, idx) => {
-      const avatar = createVehicleAvatar(p.vehicleType, p.colorHex, idx);
-      scene.add(avatar);
-      return avatar;
-    });
-
-    Object.values(highlightTexturesRef.current).forEach(tex => tex.dispose());
-    highlightTexturesRef.current = {};
-    Object.values(highlightObjectsRef.current).forEach(obj => scene.remove(obj));
-    highlightObjectsRef.current = {};
-
-    if (highlights.length && waypoints.length) {
-      highlights.forEach(h => {
-        const wp = waypoints.find(w => w.id === h.waypointId);
-        if (!wp) return;
-        const tex = createLabelTexture(wp.name, h.waypointId);
-        const planeGeom = new THREE.PlaneGeometry(0.9, 0.5);
-        const planeMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
-        const plane = new THREE.Mesh(planeGeom, planeMat);
-        const holder = new THREE.Group();
-        holder.add(plane);
-        const base = latLonToVector3(wp.latitude, wp.longitude, EARTH_RADIUS + 0.4);
-        holder.position.copy(base);
-        plane.position.set(0, 0, 0);
-        holder.scale.set(0.2, 0.2, 0.2);
-        scene.add(holder);
-        highlightObjectsRef.current[h.waypointId] = holder;
-      });
-    }
-
-    const onResize = () => {
-      if (!containerRef.current || !rendererRef.current || !cameraRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      rendererRef.current.setSize(w, h);
-      cameraRef.current.aspect = w / h;
-      cameraRef.current.updateProjectionMatrix();
-    };
-
-    window.addEventListener('resize', onResize);
-
-    const animate = (timestamp: number) => {
-      renderLoopRef.current = requestAnimationFrame(animate);
-
-      if (!cameraRef.current) return;
-
-      const camera = cameraRef.current;
-
-      if (phaseRef.current === 'overview' || routeVectors.length < 2) {
-        overviewAngleRef.current += 0.0007;
-        const radius = EARTH_RADIUS * 3.1;
-        const angle = overviewAngleRef.current;
-        const height = EARTH_RADIUS * 0.6 + Math.sin(angle * 0.6) * EARTH_RADIUS * 0.5;
-        const desired = new THREE.Vector3(
-          radius * Math.cos(angle),
-          height,
-          radius * Math.sin(angle)
-        );
-        camera.position.lerp(desired, 0.02);
-        camera.up.lerp(new THREE.Vector3(0, 1, 0), 0.05);
-        camera.lookAt(0, 0, 0);
-      } else if (phaseRef.current === 'approach') {
-        if (routeVectors.length) {
-          const firstPoint = routeVectors[0];
-          const nextPoint = routeVectors[1] ?? firstPoint;
-          if (approachStartRef.current == null) {
-            approachStartRef.current = timestamp;
-            approachFromRef.current = camera.position.clone();
-          }
-          const elapsed = Math.min(Math.max((timestamp - (approachStartRef.current ?? timestamp)) / APPROACH_DURATION, 0), 1);
-          const eased = easeInOutCubic(elapsed);
-          const normal = firstPoint.clone().normalize();
-          const fallbackAxis = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-          const tangent = ensureNormalized(nextPoint.clone().sub(firstPoint), fallbackAxis);
-          const side = computeSideVector(normal, tangent);
-          const from = approachFromRef.current ?? normal.clone().multiplyScalar(EARTH_RADIUS * 3.6);
-          const to = firstPoint.clone()
-            .add(normal.clone().multiplyScalar(1.25))
-            .add(side.multiplyScalar(0.9));
-          const position = from.clone().lerp(to, eased);
-          camera.position.copy(position);
-          camera.up.lerp(normal, 0.12);
-          const focus = firstPoint.clone()
-            .add(tangent.clone().multiplyScalar(0.6 * (1 - eased)))
-            .add(normal.clone().multiplyScalar(0.25));
-          camera.lookAt(focus);
-          if (elapsed >= 1) {
-            phaseRef.current = 'journey';
-            setIntroStage(prev => (prev === 'hidden' ? prev : 'hidden'));
-            startRef.current = null;
-            pausedTotalRef.current = 0;
-            pauseUntilRef.current = null;
-            pauseStartRef.current = null;
-            approachStartRef.current = null;
-            approachFromRef.current = null;
-          }
-        }
-      } else {
-        const idx = Math.min(Math.floor(progress * (routeVectors.length - 1)), routeVectors.length - 1);
-        const point = routeVectors[idx];
-        if (point) {
-          const normal = point.clone().normalize();
-          const nextIdx = Math.min(idx + 1, routeVectors.length - 1);
-          const nextPoint = routeVectors[nextIdx] ?? point;
-          const fallbackAxis = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-          const tangent = ensureNormalized(nextPoint.clone().sub(point), fallbackAxis);
-          const side = computeSideVector(normal, tangent);
-          const desired = point.clone()
-            .add(normal.clone().multiplyScalar(1.7))
-            .add(side.multiplyScalar(0.6));
-          camera.position.lerp(desired, 0.08);
-          const lookTarget = point.clone().add(tangent.clone().multiplyScalar(0.8));
-          camera.up.lerp(normal, 0.1);
-          camera.lookAt(lookTarget);
-        }
+      if (width === 0 || height === 0) {
+        setInitError('Container has no size');
+        return;
       }
 
-      if (globeRef.current) globeRef.current.rotation.y += 0.0004;
-      Object.values(highlightObjectsRef.current).forEach(obj => {
-        if (!cameraRef.current) return;
-        obj.lookAt(camera.position);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x040a1a);
+      sceneRef.current = scene;
+
+      const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 2000);
+      camera.position.set(0, EARTH_RADIUS * 0.75, EARTH_RADIUS * 2.2);
+      camera.lookAt(0, 0, 0);
+      cameraRef.current = camera;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(width, height);
+      renderer.setClearColor(0x040a1a, 1);
+      containerRef.current.appendChild(renderer.domElement);
+      rendererRef.current = renderer;
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambient);
+      const keyLight = new THREE.DirectionalLight(0xffffff, 0.95);
+      keyLight.position.set(5, 8, 4);
+      scene.add(keyLight);
+      const fillLight = new THREE.DirectionalLight(0x89b4ff, 0.3);
+      fillLight.position.set(-6, -4, -2);
+      scene.add(fillLight);
+
+      const textureLoader = new THREE.TextureLoader();
+      textureLoader.setCrossOrigin('anonymous');
+
+      const globeGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
+      const globeMaterial = new THREE.MeshPhongMaterial({
+        color: 0x2288cc,
+        emissive: 0x0a1a2e,
+        emissiveIntensity: 0.15,
+        specular: new THREE.Color(0x333333),
+        shininess: 8,
       });
-      renderer.render(scene, camera);
-    };
+      const globe = new THREE.Mesh(globeGeometry, globeMaterial);
+      scene.add(globe);
+      globeRef.current = globe;
 
-    renderLoopRef.current = requestAnimationFrame(animate);
+      textureLoader.load(EARTH_TEXTURE_URL, (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        globeMaterial.map = tex;
+        globeMaterial.needsUpdate = true;
+      });
+      textureLoader.load(EARTH_BUMP_URL, (tex) => {
+        globeMaterial.bumpMap = tex;
+        globeMaterial.needsUpdate = true;
+      });
+      textureLoader.load(EARTH_SPEC_URL, (tex) => {
+        globeMaterial.specularMap = tex;
+        globeMaterial.needsUpdate = true;
+      });
 
-    return () => {
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
+      const starGeometry = new THREE.BufferGeometry();
+      const starVertices = new Float32Array(1500 * 3);
+      for (let i = 0; i < 1500; i++) {
+        const radius = 80 + Math.random() * 40;
+        const theta = Math.random() * 2 * Math.PI;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const x = radius * Math.sin(phi) * Math.cos(theta);
+        const y = radius * Math.sin(phi) * Math.sin(theta);
+        const z = radius * Math.cos(phi);
+        starVertices[i * 3] = x;
+        starVertices[i * 3 + 1] = y;
+        starVertices[i * 3 + 2] = z;
       }
-      window.removeEventListener('resize', onResize);
-      if (renderLoopRef.current) cancelAnimationFrame(renderLoopRef.current);
-      if (progressLoopRef.current) cancelAnimationFrame(progressLoopRef.current);
-      scene.clear();
-      participantMeshes.current = [];
+      starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+      const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.45, transparent: true, opacity: 0.65 });
+      const stars = new THREE.Points(starGeometry, starMaterial);
+      scene.add(stars);
+
+      if (routeVectors.length > 1) {
+        const routeGeometry = new THREE.BufferGeometry().setFromPoints(routeVectors);
+        const routeMaterial = new THREE.LineBasicMaterial({ color: 0xffd95a, transparent: true, opacity: 0.9, linewidth: 4 });
+        const routeLine = new THREE.Line(routeGeometry, routeMaterial);
+        scene.add(routeLine);
+      }
+
+      participantMeshes.current = participants.map((p, idx) => {
+        const avatar = createVehicleAvatar(p.vehicleType, p.colorHex, idx);
+        scene.add(avatar);
+        return avatar;
+      });
+
       Object.values(highlightTexturesRef.current).forEach(tex => tex.dispose());
       highlightTexturesRef.current = {};
+      Object.values(highlightObjectsRef.current).forEach(obj => scene.remove(obj));
       highlightObjectsRef.current = {};
-      rendererRef.current = undefined;
-    };
+
+      if (highlights.length && waypoints.length) {
+        highlights.forEach(h => {
+          const wp = waypoints.find(w => w.id === h.waypointId);
+          if (!wp) return;
+          const tex = createLabelTexture(wp.name, h.waypointId);
+          const planeGeom = new THREE.PlaneGeometry(0.9, 0.5);
+          const planeMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+          const plane = new THREE.Mesh(planeGeom, planeMat);
+          const holder = new THREE.Group();
+          holder.add(plane);
+          const base = latLonToVector3(wp.latitude, wp.longitude, EARTH_RADIUS + 0.4);
+          holder.position.copy(base);
+          plane.position.set(0, 0, 0);
+          holder.scale.set(0.2, 0.2, 0.2);
+          scene.add(holder);
+          highlightObjectsRef.current[h.waypointId] = holder;
+        });
+      }
+
+      const onResize = () => {
+        if (!containerRef.current || !rendererRef.current || !cameraRef.current) return;
+        const w = containerRef.current.clientWidth;
+        const h = containerRef.current.clientHeight;
+        rendererRef.current.setSize(w, h);
+        cameraRef.current.aspect = w / h;
+        cameraRef.current.updateProjectionMatrix();
+      };
+
+      window.addEventListener('resize', onResize);
+
+      const animate = (timestamp: number) => {
+        renderLoopRef.current = requestAnimationFrame(animate);
+
+        if (!cameraRef.current) return;
+
+        const camera = cameraRef.current;
+
+        if (phaseRef.current === 'overview' || routeVectors.length < 2) {
+          overviewAngleRef.current += 0.0007;
+          const radius = EARTH_RADIUS * 3.1;
+          const angle = overviewAngleRef.current;
+          const height = EARTH_RADIUS * 0.6 + Math.sin(angle * 0.6) * EARTH_RADIUS * 0.5;
+          const desired = new THREE.Vector3(
+            radius * Math.cos(angle),
+            height,
+            radius * Math.sin(angle)
+          );
+          camera.position.lerp(desired, 0.02);
+          camera.up.lerp(new THREE.Vector3(0, 1, 0), 0.05);
+          camera.lookAt(0, 0, 0);
+        } else {
+          const idx = Math.min(Math.floor(progress * (routeVectors.length - 1)), routeVectors.length - 1);
+          const point = routeVectors[idx];
+          if (point) {
+            const normal = point.clone().normalize();
+            const nextIdx = Math.min(idx + 1, routeVectors.length - 1);
+            const nextPoint = routeVectors[nextIdx] ?? point;
+            const fallbackAxis = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+            const tangent = ensureNormalized(nextPoint.clone().sub(point), fallbackAxis);
+            const side = computeSideVector(normal, tangent);
+            const desired = point.clone()
+              .add(normal.clone().multiplyScalar(1.7))
+              .add(side.multiplyScalar(0.6));
+            camera.position.lerp(desired, 0.08);
+            const lookTarget = point.clone().add(tangent.clone().multiplyScalar(0.8));
+            camera.up.lerp(normal, 0.1);
+            camera.lookAt(lookTarget);
+          }
+        }
+
+        if (globeRef.current) globeRef.current.rotation.y += 0.0004;
+        Object.values(highlightObjectsRef.current).forEach(obj => {
+          if (!cameraRef.current) return;
+          obj.lookAt(camera.position);
+        });
+        renderer.render(scene, camera);
+      };
+
+      renderLoopRef.current = requestAnimationFrame(animate);
+
+      return () => {
+        if (rendererRef.current) {
+          rendererRef.current.dispose();
+        }
+        window.removeEventListener('resize', onResize);
+        if (renderLoopRef.current) cancelAnimationFrame(renderLoopRef.current);
+        if (progressLoopRef.current) cancelAnimationFrame(progressLoopRef.current);
+        scene.clear();
+        participantMeshes.current = [];
+        Object.values(highlightTexturesRef.current).forEach(tex => tex.dispose());
+        highlightTexturesRef.current = {};
+        highlightObjectsRef.current = {};
+        rendererRef.current = undefined;
+      };
+    } catch (err) {
+      console.error('Three.js init error:', err);
+      setInitError(String(err));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeVectors, participants, highlights, waypoints]);
 
@@ -896,6 +873,14 @@ const createLabelTexture = (title: string, waypointId: number): THREE.Texture =>
   return (
     <div className="fixed inset-0 bg-black flex flex-col text-white">
       <div className="absolute inset-0" ref={containerRef} />
+      {initError && (
+        <div className="absolute inset-0 flex items-center justify-center z-60">
+          <div className="text-center px-6 py-4 bg-white/5 backdrop-blur-md rounded-2xl border border-white/10 text-white/70 text-sm max-w-md">
+            <p className="mb-2">3D view unavailable</p>
+            <p className="text-xs text-white/40">{initError}</p>
+          </div>
+        </div>
+      )}
       {introStage !== 'hidden' && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 text-center px-6 py-3 bg-white/5 backdrop-blur-md rounded-2xl border border-white/10" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>
           <div className="text-[11px] uppercase tracking-[0.5em] text-white/50 mb-2">
